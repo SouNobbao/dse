@@ -72,14 +72,12 @@ static void LoadSteamConfigFromDll(HMODULE hSteamApi) {
                         nullptr, nullptr);
     LOG("[DSE-DLL] Config: steam_path = %s\n", g_steamPath);
   }
-
-  WCHAR appidPath[MAX_PATH]{};
-  GetModuleFileNameW(NULL, appidPath, MAX_PATH);
-  PathRemoveFileSpecW(appidPath);
-  PathAppendW(appidPath, L"steam_appid.txt");
-  HANDLE hFile = CreateFileW(appidPath, GENERIC_READ, FILE_SHARE_READ, nullptr,
-                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (hFile != INVALID_HANDLE_VALUE) {
+  
+  auto TryReadAppId = [](LPCWSTR path, uint32_t &outId) -> bool {
+    HANDLE hFile = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr,
+                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE)
+      return false;
     char idBuf[32]{};
     DWORD read = 0;
     ReadFile(hFile, idBuf, sizeof(idBuf) - 1, &read, nullptr);
@@ -87,14 +85,46 @@ static void LoadSteamConfigFromDll(HMODULE hSteamApi) {
     uint32_t appId = 0;
     for (DWORD i = 0; i < read && idBuf[i] >= '0' && idBuf[i] <= '9'; i++)
       appId = appId * 10 + (idBuf[i] - '0');
-    if (appId > 0) {
-      char envBuf[32];
-      sprintf(envBuf, "%u", appId);
-      SetEnvironmentVariableA("SteamAppId", envBuf);
-      SetEnvironmentVariableA("SteamGameId", envBuf);
-      LOG("[DSE-DLL] Read steam_appid.txt, set env SteamAppId = %u\n",
-              appId);
+    if (appId > 0) { outId = appId; return true; }
+    return false;
+  };
+
+  WCHAR exeDir[MAX_PATH]{};
+  GetModuleFileNameW(NULL, exeDir, MAX_PATH);
+  PathRemoveFileSpecW(exeDir);
+
+  WCHAR rootAppIdPath[MAX_PATH]{};
+  lstrcpynW(rootAppIdPath, exeDir, MAX_PATH);
+  PathAppendW(rootAppIdPath, L"steam_appid.txt");
+
+  WCHAR settingsAppIdPath[MAX_PATH]{};
+  lstrcpynW(settingsAppIdPath, dllDir, MAX_PATH);
+  PathAppendW(settingsAppIdPath, L"steam_settings\\steam_appid.txt");
+
+  uint32_t appId = 0;
+  bool foundInRoot = TryReadAppId(rootAppIdPath, appId);
+  bool foundInSettings = !foundInRoot && TryReadAppId(settingsAppIdPath, appId);
+
+  if (foundInRoot) {
+    LOG("[DSE-DLL] steam_appid.txt found in game root, AppId = %u\n", appId);
+  } else if (foundInSettings) {
+    LOG("[DSE-DLL] steam_appid.txt found in steam_settings, AppId = %u\n", appId);
+    if (!CopyFileW(settingsAppIdPath, rootAppIdPath, FALSE)) {
+      LOG("[DSE-DLL] WARNING: Failed to copy steam_appid.txt to root (err %lu)\n",
+              GetLastError());
+    } else {
+      LOG("[DSE-DLL] Copied steam_appid.txt to game root\n");
     }
+  } else {
+    LOG("[DSE-DLL] WARNING: steam_appid.txt not found in root or steam_settings\n");
+  }
+
+  if (appId > 0) {
+    char envBuf[32];
+    sprintf(envBuf, "%u", appId);
+    SetEnvironmentVariableA("SteamAppId",  envBuf);
+    SetEnvironmentVariableA("SteamGameId", envBuf);
+    LOG("[DSE-DLL] Set env SteamAppId/SteamGameId = %u\n", appId);
   }
 }
 
