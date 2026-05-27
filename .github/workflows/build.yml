@@ -116,15 +116,18 @@ jobs:
           **Changes:**
           ${{ github.event.head_commit.message }}
 
-          Please note that all dlls are compressed with UPX, so if you want to analyze them, please just use source code!!
+          > [!NOTE]
+          > Please note that all dlls are compressed with UPX, so if you want to analyze them, please just use source code!!
 
+          ```
           Includes:
           - dse.dll: no Steam hooks, no logging
           - dse_steam.dll: Steam hooks, no logging
           - dse_log.dll: no Steam hooks, logging
           - dse_steam_log.dll: Steam hooks, logging
           - dse_all.dll: Steam hooks, logging, and _IMNOTSURE_IFNEEDED
-
+          ```
+          
         draft: false
         prerelease: false
         files: |

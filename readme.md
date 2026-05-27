@@ -30,4 +30,5 @@ once we elevate the owo stuff should not require more elevation and start the se
 # stuff to fix
 - [] Relaunch MSI AFTERBURNER
 - [] uhh kill services
+- [] make sure kvc doesnt shit it self
 - [] idk you tell me

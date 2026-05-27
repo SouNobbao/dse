@@ -25,47 +25,51 @@ static void LoadSteamConfigFromDll(HMODULE hSteamApi) {
     return;
   PathRemoveFileSpecW(dllDir);
 
-  WCHAR iniPath[MAX_PATH]{};
-  lstrcpynW(iniPath, dllDir, MAX_PATH);
-  PathAppendW(iniPath, L"steam_settings\\configs.user.ini");
+  WCHAR userIniPath[MAX_PATH]{};
+  lstrcpynW(userIniPath, dllDir, MAX_PATH);
+  PathAppendW(userIniPath, L"steam_settings\\configs.user.ini");
 
-  if (GetFileAttributesW(iniPath) == INVALID_FILE_ATTRIBUTES) {
+  if (GetFileAttributesW(userIniPath) == INVALID_FILE_ATTRIBUTES) {
     LOG("[DSE-DLL] No steam_settings/configs.user.ini found, using default "
             "SteamID\n");
-    return;
-  }
-
-  char iniPathA[MAX_PATH]{};
-  WideCharToMultiByte(CP_ACP, 0, iniPath, -1, iniPathA, MAX_PATH, nullptr,
-                      nullptr);
-
-  char buf[64]{};
-  GetPrivateProfileStringA("user::general", "account_steamid", "0", buf,
-                           sizeof(buf), iniPathA);
-  uint64_t parsed = 0;
-  for (int i = 0; buf[i] >= '0' && buf[i] <= '9'; i++)
-    parsed = parsed * 10 + (buf[i] - '0');
-  if (parsed > 0) {
-    g_fakeSteamID = parsed;
-    LOG("[DSE-DLL] Config: SteamID = %llu (from configs.user.ini)\n",
-            (unsigned long long)g_fakeSteamID);
   } else {
-    LOG("[DSE-DLL] No valid account_steamid in configs.user.ini, using "
-            "default\n");
+    WCHAR buf[64]{};
+    GetPrivateProfileStringW(L"user::general", L"account_steamid", L"0", buf,
+                             ARRAYSIZE(buf), userIniPath);
+    uint64_t parsed = 0;
+    for (int i = 0; buf[i] >= L'0' && buf[i] <= L'9'; i++)
+      parsed = parsed * 10 + (buf[i] - L'0');
+    if (parsed > 0) {
+      g_fakeSteamID = parsed;
+      LOG("[DSE-DLL] Config: SteamID = %llu (from configs.user.ini)\n",
+              (unsigned long long)g_fakeSteamID);
+    } else {
+      LOG("[DSE-DLL] No valid account_steamid in configs.user.ini, using "
+              "default\n");
+    }
   }
 
-  char offBuf[16]{};
-  GetPrivateProfileStringA("user::general", "offline", "1", offBuf,
-                           sizeof(offBuf), iniPathA);
-  g_forceOffline = (offBuf[0] == '1');
+  WCHAR mainIniPath[MAX_PATH]{};
+  lstrcpynW(mainIniPath, dllDir, MAX_PATH);
+  PathAppendW(mainIniPath, L"steam_settings\\configs.main.ini");
+
+  WCHAR offBuf[16]{};
+  GetPrivateProfileStringW(L"main::connectivity", L"offline", L"1", offBuf,
+                           ARRAYSIZE(offBuf), mainIniPath);
+  g_forceOffline = (offBuf[0] == L'1');
   LOG("[DSE-DLL] Config: offline = %s\n",
           g_forceOffline ? "true" : "false");
 
-  char pathBuf[MAX_PATH]{};
-  GetPrivateProfileStringA("main", "steam_path", "", pathBuf, sizeof(pathBuf),
-                           iniPathA);
+  WCHAR dseIniPath[MAX_PATH]{};
+  lstrcpynW(dseIniPath, dllDir, MAX_PATH);
+  PathAppendW(dseIniPath, L"steam_settings\\configs.dse.ini");
+
+  WCHAR pathBuf[MAX_PATH]{};
+  GetPrivateProfileStringW(L"main", L"steam_path", L"", pathBuf,
+                           ARRAYSIZE(pathBuf), dseIniPath);
   if (pathBuf[0]) {
-    lstrcpynA(g_steamPath, pathBuf, MAX_PATH);
+    WideCharToMultiByte(CP_UTF8, 0, pathBuf, -1, g_steamPath, MAX_PATH,
+                        nullptr, nullptr);
     LOG("[DSE-DLL] Config: steam_path = %s\n", g_steamPath);
   }
 
@@ -190,7 +194,7 @@ static void* Hooked_GetSteamID_vtable(void *self, uint64_t *pOut) {
 
 static bool Hooked_BLoggedOn_vtable(void *self) {
   bool orig = Orig_BLoggedOn_vtable ? Orig_BLoggedOn_vtable(self) : false;
-  LOG("[DSE-DLL] ISteamUser::BLoggedOn() orig=%d -> true\n", orig);
+  LOG("[DSE-DLL] ISteamUser::BLoggedOn() orig=%d -> false\n", orig);
   return false;
 }
 
