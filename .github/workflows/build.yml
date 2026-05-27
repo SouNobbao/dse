@@ -54,7 +54,7 @@ jobs:
     - name: kvc source report
       run: |
         if [[ "${{ steps.fetch_kvc.outcome }}" == "success" ]]; then
-          echo "Using freshly fetched kvc_bin.cpp from upstream."
+          echo "Using upstream kvc binary for build."
         elif [[ -f kvc_bin.cpp ]]; then
           echo "Upstream fetch failed, using existing kvc_bin.cpp from repo."
         else
@@ -131,7 +131,7 @@ jobs:
 
     steps:
     - name: Download x64 artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: dse-x64
         path: ./release
@@ -149,7 +149,7 @@ jobs:
         fi
 
     - name: Create Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v3
       with:
         tag_name: ${{ steps.release_info.outputs.tag }}
         name: DSE ${{ steps.release_info.outputs.tag }}
@@ -158,6 +158,7 @@ jobs:
 
           **Changes:**
           ${{ github.event.head_commit.message }}
+          ${{ steps.release_info.outputs.kvc_note }}
 
           > [!NOTE]
           > Please note that all dlls are compressed with UPX, so if you want to analyze them, please just use source code!!
