@@ -1,0 +1,123 @@
+name: Build DSE
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Compiler || Cache APT
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: clang lld mingw-w64
+
+    - name: Build DLLs
+      run: |
+        set -euo pipefail
+        mkdir -p build
+
+        COMMON_FLAGS=(
+          --target=x86_64-w64-mingw32
+          -O3
+          -mwindows
+          -municode
+          -shared
+          -static
+          -fuse-ld=lld
+          -Iminhook/include
+        )
+
+        SOURCES=(
+          dllmain.cpp
+          minhook/src/buffer.c
+          minhook/src/hook.c
+          minhook/src/trampoline.c
+          minhook/src/hde/hde64.c
+          minhook/src/hde/hde32.c
+        )
+
+        LIBS=(
+          -lshlwapi
+          -luser32
+          -lkernel32
+          -ladvapi32
+          -lole32
+        )
+
+        clang++ "${COMMON_FLAGS[@]}" "${SOURCES[@]}" "${LIBS[@]}" \
+          -o build/dse.dll
+
+        clang++ "${COMMON_FLAGS[@]}" -D_STEAM "${SOURCES[@]}" "${LIBS[@]}" \
+          -o build/dse_steam.dll
+
+        clang++ "${COMMON_FLAGS[@]}" -D_DEBUG "${SOURCES[@]}" "${LIBS[@]}" \
+          -o build/dse_log.dll
+
+        clang++ "${COMMON_FLAGS[@]}" -D_STEAM -D_DEBUG "${SOURCES[@]}" "${LIBS[@]}" \
+          -o build/dse_steam_log.dll
+
+        clang++ "${COMMON_FLAGS[@]}" -D_STEAM -D_DEBUG -D_IMNOTSURE_IFNEEDED "${SOURCES[@]}" "${LIBS[@]}" \
+          -o build/dse_all.dll
+
+    - name: Create zip
+      run: |
+        cd build && zip -r ../dse-x64.zip .
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: dse-x64
+        path: dse-x64.zip
+        retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+
+    steps:
+    - name: Download x64 artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: dse-x64
+        path: ./release
+
+    - name: Generate release info
+      id: release_info
+      run: |
+        echo "tag=v$(date +'%Y.%m.%d')-$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+        echo "date=$(date +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.release_info.outputs.tag }}
+        name: DSE ${{ steps.release_info.outputs.tag }}
+        body: |
+          **Build Date:** ${{ steps.release_info.outputs.date }}
+
+          Includes:
+          - dse.dll: no Steam hooks, no logging
+          - dse_steam.dll: Steam hooks, no logging
+          - dse_log.dll: no Steam hooks, logging
+          - dse_steam_log.dll: Steam hooks, logging
+          - dse_all.dll: Steam hooks, logging, and _IMNOTSURE_IFNEEDED
+
+        draft: false
+        prerelease: false
+        files: |
+          ./release/dse-x64.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
