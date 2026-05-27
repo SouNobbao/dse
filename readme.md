@@ -24,7 +24,7 @@ How to use
 | `dse_all.dll` | everything above + extra paranoid stuff |
 
 # what this code does
-mainly drops kvc and a vbs script to elevate in temp \ 
+mainly drops kvc and a vbs script to elevate in temp\
 once we elevate the owo stuff should not require more elevation and start the service automatically !!
 
 # stuff to fix
