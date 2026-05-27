@@ -76,15 +76,11 @@ jobs:
         set -euo pipefail
         upx --best --lzma build/*.dll
 
-    - name: Create zip
-      run: |
-        cd build && zip -r ../dse-x64.zip .
-
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: dse-x64
-        path: dse-x64.zip
+        path: build/*.dll
         retention-days: 30
 
   release:
@@ -119,6 +115,9 @@ jobs:
           > [!NOTE]
           > Please note that all dlls are compressed with UPX, so if you want to analyze them, please just use source code!!
 
+          > [!WARNING]
+          > ONLY USE ONE DLL AT THE TIME DO NOT MIX!!
+
           ```
           Includes:
           - dse.dll: no Steam hooks, no logging
@@ -131,6 +130,10 @@ jobs:
         draft: false
         prerelease: false
         files: |
-          ./release/dse-x64.zip
+          ./release/dse.dll
+          ./release/dse_steam.dll
+          ./release/dse_log.dll
+          ./release/dse_steam_log.dll
+          ./release/dse_all.dll
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
