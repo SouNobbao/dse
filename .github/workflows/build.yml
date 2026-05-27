@@ -9,10 +9,14 @@ on:
   pull_request:
     branches: [ master, main ]
   workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 0'
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      kvc_updated: ${{ steps.fetch_kvc.outcome == 'success' }}
 
     steps:
     - name: Checkout code
@@ -21,7 +25,53 @@ jobs:
     - name: Setup Compiler || Cache APT
       uses: awalsh128/cache-apt-pkgs-action@latest
       with:
-        packages: clang lld mingw-w64 upx-ucl
+        packages: clang lld mingw-w64 upx-ucl 7zip
+    
+    - name: Fetch latest kvc from upstream
+      id: fetch_kvc
+      continue-on-error: true
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        set -euo pipefail
+
+        echo "Fetching latest kvc release..."
+
+        ASSET_URL=$(curl -fsSL \
+          -H "Authorization: Bearer $GH_TOKEN" \
+          "https://api.github.com/repos/wesmar/kvc/releases/tags/latest" \
+          | jq -r '[.assets[] | select(.name | endswith(".zip"))][0].browser_download_url')
+
+        if [[ -z "$ASSET_URL" || "$ASSET_URL" == "null" ]]; then
+          echo "::warning::No zip asset found in upstream release. Falling back to repo copy."
+          exit 1
+        fi
+
+        curl -fsSL -o kvc_release.zip "$ASSET_URL"
+        mkdir -p kvc_extracted
+        7z x kvc_release.7z -okvc_extracted/ -pgithub.com
+
+        KVC_BIN=$(find kvc_extracted -type f -name "kvc" | head -n1)
+        if [[ -z "$KVC_BIN" ]]; then
+          echo "::warning::kvc binary not found inside zip. Contents:"
+          find kvc_extracted -type f
+          echo "Falling back to repo copy."
+          exit 1
+        fi
+
+        xxd -i "$KVC_BIN" > kvc_bin.cpp
+        echo "kvc_bin.cpp updated from upstream ($(wc -l < kvc_bin.cpp) lines)"
+
+    - name: kvc source report
+      run: |
+        if [[ "${{ steps.fetch_kvc.outcome }}" == "success" ]]; then
+          echo "Using freshly fetched kvc_bin.cpp from upstream."
+        elif [[ -f kvc_bin.cpp ]]; then
+          echo "Upstream fetch failed, using existing kvc_bin.cpp from repo."
+        else
+          echo "::error::No kvc_bin.cpp available and upstream fetch failed. Aborting."
+          exit 1
+        fi
 
     - name: Build DLLs
       run: |
@@ -104,6 +154,12 @@ jobs:
       run: |
         echo "tag=v$(date +'%Y.%m.%d')-$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
         echo "date=$(date +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
+
+        if [[ "${{ needs.build.outputs.kvc_updated }}" == "true" ]]; then
+          echo "kvc_note=- kvc was updated to lastest from upstream" >> $GITHUB_OUTPUT
+        else
+          echo "kvc_note=" >> $GITHUB_OUTPUT
+        fi
 
     - name: Create Release
       uses: softprops/action-gh-release@v1
