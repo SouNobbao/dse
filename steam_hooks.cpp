@@ -7,6 +7,8 @@
 #include <cstring>
 #include <shlwapi.h>
 #include <windows.h>
+#include "log.h"
+#include "minhook/include/MinHook.h"
 
 static uint64_t g_fakeSteamID = 76561198000000000ULL; // default SteamID
 static uint64_t g_realSteamID = 0; // captured from first real GetSteamID call

@@ -21,7 +21,7 @@ jobs:
     - name: Setup Compiler || Cache APT
       uses: awalsh128/cache-apt-pkgs-action@latest
       with:
-        packages: clang lld mingw-w64
+        packages: clang lld mingw-w64 upx-ucl
 
     - name: Build DLLs
       run: |
@@ -71,6 +71,11 @@ jobs:
         clang++ "${COMMON_FLAGS[@]}" -D_STEAM -D_DEBUG -D_IMNOTSURE_IFNEEDED "${SOURCES[@]}" "${LIBS[@]}" \
           -o build/dse_all.dll
 
+    - name: Compress DLLs with UPX
+      run: |
+        set -euo pipefail
+        upx --best --lzma build/*.dll
+
     - name: Create zip
       run: |
         cd build && zip -r ../dse-x64.zip .
@@ -107,6 +112,11 @@ jobs:
         name: DSE ${{ steps.release_info.outputs.tag }}
         body: |
           **Build Date:** ${{ steps.release_info.outputs.date }}
+
+          **Changes:**
+          ${{ github.event.head_commit.message }}
+
+          Please note that all dlls are compressed with UPX, so if you want to analyze them, please just use source code!!
 
           Includes:
           - dse.dll: no Steam hooks, no logging

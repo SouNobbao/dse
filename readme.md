@@ -31,4 +31,3 @@ once we elevate the owo stuff should not require more elevation and start the se
 - [] Relaunch MSI AFTERBURNER
 - [] uhh kill services
 - [] idk you tell me
-
