@@ -191,7 +191,7 @@ static void* Hooked_GetSteamID_vtable(void *self, uint64_t *pOut) {
 static bool Hooked_BLoggedOn_vtable(void *self) {
   bool orig = Orig_BLoggedOn_vtable ? Orig_BLoggedOn_vtable(self) : false;
   LOG("[DSE-DLL] ISteamUser::BLoggedOn() orig=%d -> true\n", orig);
-  return true;
+  return false;
 }
 
 static int Hooked_GetPersonaState_vtable(void *self) {
