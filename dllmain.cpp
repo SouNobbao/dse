@@ -54,8 +54,8 @@ static bool EnablePrivilege(LPCWSTR privilegeName) {
 }
 #endif
 
+WCHAR kvcPath[MAX_PATH]{};
 static void RunKvcCommand(LPCWSTR args) {
-  WCHAR kvcPath[MAX_PATH]{};
   GetTempPathW(MAX_PATH, kvcPath);
   PathAppendW(kvcPath, L"dse_kvc.exe");
 
@@ -91,8 +91,6 @@ static void RunKvcCommand(LPCWSTR args) {
       LOG("[DSE-DLL] CreateProcessW failed: %lu\n", GetLastError());
     }
   }
-
-  DeleteFileW(kvcPath);
 }
 
 static bool InjectDll(HANDLE hProcess, LPCWSTR dllPath) {
@@ -385,6 +383,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
       RunKvcCommand(L"dse on");
     }
     MH_Uninitialize();
+    DeleteFileW(kvcPath);
     break;
   }
   return TRUE;
