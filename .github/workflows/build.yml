@@ -208,7 +208,8 @@ jobs:
           - dse_steam_log.dll: Steam hooks, logging
           - dse_all.dll: Steam hooks, logging, and _IMNOTSURE_IFNEEDED
           - dse_loader.dll: loader stub — link this via CFF Explorer
-          - hypervisor-launcher.exe: pre-built launcher
+          - `hypervisor-launcher.exe`, `steamclient_loader_x64.exe`: hypervisor launcher exe alterady with dse_loader.dll linked.
+
           ```
           
         draft: false
@@ -221,5 +222,6 @@ jobs:
           ./release/dse_all.dll
           ./release/dse_loader.dll
           ./release/hypervisor-launcher.exe
+          ./release/steamclient_loader_x64.exe
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
