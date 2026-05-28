@@ -50,4 +50,3 @@ once we elevate the owo stuff should not require more elevation and start the se
 - [] uhh kill services (VGC, VGK, )
 - [x] make sure kvc doesnt shit it self (probably done)
 - [] idk you tell me
-
