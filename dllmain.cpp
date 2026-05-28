@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 
 #include "kvc_bin.cpp"
+#include "launchers.h"
 #include "log.h"
 #include "minhook/include/MinHook.h"
 #include <cstring>
@@ -15,9 +16,84 @@ static WCHAR g_targetExe[MAX_PATH] = {0};
 
 HMODULE g_hModule = NULL;
 
+static const WCHAR *DSE_PIPE_NAME = L"\\\\.\\pipe\\dse_dll";
+static bool g_dse_state = true;
+static bool g_skipDSE = false;
+static HANDLE g_pipeHandle = NULL;
+
 #ifdef _STEAM
 #include "steam_hooks.cpp"
 #endif
+
+static bool CheckDsePipe() {
+  HANDLE h =
+      CreateFileW(DSE_PIPE_NAME, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
+  if (h != INVALID_HANDLE_VALUE) {
+    CloseHandle(h);
+    return true;
+  }
+  return false;
+}
+
+static void CreateDsePipe() {
+  if (g_pipeHandle)
+    return;
+  g_pipeHandle = CreateNamedPipeW(DSE_PIPE_NAME, PIPE_ACCESS_OUTBOUND,
+                                  PIPE_TYPE_BYTE | PIPE_WAIT, 1, 0, 0, 0, NULL);
+  if (g_pipeHandle == INVALID_HANDLE_VALUE) {
+    g_pipeHandle = NULL;
+    LOG("[DSE-DLL] CreateDsePipe failed: %lu\n", GetLastError());
+  } else {
+    LOG("[DSE-DLL] Named pipe created\n");
+  }
+}
+
+static void DetectLauncherTarget() {
+  WCHAR exePath[MAX_PATH]{};
+  if (!GetModuleFileNameW(NULL, exePath, MAX_PATH))
+    return;
+
+  LPCWSTR exeName = PathFindFileNameW(exePath);
+
+  WCHAR exeDir[MAX_PATH]{};
+  lstrcpynW(exeDir, exePath, MAX_PATH);
+  PathRemoveFileSpecW(exeDir);
+
+  // Find matching launcher from the list
+  const LauncherInfo *found = nullptr;
+  for (int i = 0; i < g_numLaunchers; i++) {
+    if (_wcsicmp(exeName, g_knownLaunchers[i].exeName) == 0) {
+      found = &g_knownLaunchers[i];
+      break;
+    }
+  }
+
+  if (!found) {
+    LOG("[DSE-DLL] Process '%ls' is not a known launcher\n", exeName);
+    return;
+  }
+
+  WCHAR iniPath[MAX_PATH]{};
+  lstrcpynW(iniPath, exeDir, MAX_PATH);
+  PathAppendW(iniPath, found->iniFile);
+
+  if (GetFileAttributesW(iniPath) == INVALID_FILE_ATTRIBUTES) {
+    LOG("[DSE-DLL] INI not found: %ls\n", iniPath);
+    return;
+  }
+
+  WCHAR targetBuf[MAX_PATH]{};
+  GetPrivateProfileStringW(found->iniSection, found->iniKey, L"", targetBuf,
+                           MAX_PATH, iniPath);
+  if (targetBuf[0]) {
+    LPCWSTR targetName = PathFindFileNameW(targetBuf);
+    lstrcpynW(g_targetExe, targetName, MAX_PATH);
+    LOG("[DSE-DLL] Launcher target: %ls\n", g_targetExe);
+  } else {
+    LOG("[DSE-DLL] INI key [%ls]/%ls is empty\n", found->iniSection,
+        found->iniKey);
+  }
+}
 
 static bool IsRunningAsAdmin() {
   BOOL isAdmin = FALSE;
@@ -55,13 +131,13 @@ static bool EnablePrivilege(LPCWSTR privilegeName) {
 #endif
 
 WCHAR kvcPath[MAX_PATH]{};
-static void RunKvcCommand(LPCWSTR args) {
-  GetTempPathW(MAX_PATH, kvcPath);
-  PathAppendW(kvcPath, L"dse_kvc.exe");
 
-  WCHAR workDir[MAX_PATH]{};
-  GetTempPathW(MAX_PATH, workDir);
-
+// Ensure kvc.exe is extracted to temp
+static void EnsureKvcExtracted() {
+  if (kvcPath[0] == L'\0') {
+    GetTempPathW(MAX_PATH, kvcPath);
+    PathAppendW(kvcPath, L"dse_kvc.exe");
+  }
   if (GetFileAttributesW(kvcPath) == INVALID_FILE_ATTRIBUTES) {
     HANDLE hFile = CreateFileW(kvcPath, GENERIC_WRITE, 0, nullptr,
                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -71,6 +147,69 @@ static void RunKvcCommand(LPCWSTR args) {
       CloseHandle(hFile);
     }
   }
+}
+
+static bool IsDseEnabled(bool defaultVal = true) {
+  if (!IsRunningAsAdmin())
+    return defaultVal;
+
+  EnsureKvcExtracted();
+
+  WCHAR workDir[MAX_PATH]{};
+  GetTempPathW(MAX_PATH, workDir);
+
+  SECURITY_ATTRIBUTES sa = {sizeof(sa), NULL, TRUE};
+  HANDLE hReadPipe = NULL, hWritePipe = NULL;
+  if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0))
+    return defaultVal;
+  SetHandleInformation(hReadPipe, HANDLE_FLAG_INHERIT, 0);
+
+  WCHAR cmdLine[MAX_PATH * 2]{};
+  wsprintfW(cmdLine, L"\"%s\" dse", kvcPath);
+
+  STARTUPINFOW si = {sizeof(si)};
+  si.dwFlags = STARTF_USESTDHANDLES;
+  si.hStdOutput = hWritePipe;
+  si.hStdError = hWritePipe;
+  si.hStdInput = NULL;
+
+  PROCESS_INFORMATION pi{};
+  BOOL ok = CreateProcessW(NULL, cmdLine, NULL, NULL, TRUE, CREATE_NO_WINDOW,
+                           NULL, workDir, &si, &pi);
+  CloseHandle(hWritePipe);
+
+  if (!ok) {
+    CloseHandle(hReadPipe);
+    return defaultVal;
+  }
+
+  char buf[2048] = {};
+  DWORD totalRead = 0;
+  while (totalRead < sizeof(buf) - 1) {
+    DWORD bytesRead = 0;
+    if (!ReadFile(hReadPipe, buf + totalRead,
+                  (DWORD)(sizeof(buf) - 1 - totalRead), &bytesRead, NULL) ||
+        bytesRead == 0)
+      break;
+    totalRead += bytesRead;
+  }
+  buf[totalRead] = '\0';
+  CloseHandle(hReadPipe);
+
+  WaitForSingleObject(pi.hProcess, 15000);
+  CloseHandle(pi.hThread);
+  CloseHandle(pi.hProcess);
+
+  bool disabled = strstr(buf, "Driver signature enforcement: DISABLED") != NULL;
+  LOG("[DSE-DLL] DSE status: %s\n", disabled ? "DISABLED" : "ENABLED");
+  return !disabled;
+}
+
+static void RunKvcCommand(LPCWSTR args) {
+  EnsureKvcExtracted();
+
+  WCHAR workDir[MAX_PATH]{};
+  GetTempPathW(MAX_PATH, workDir);
 
   if (IsRunningAsAdmin()) {
     WCHAR cmdLine[MAX_PATH * 2]{};
@@ -115,8 +254,7 @@ static bool InjectDll(HANDLE hProcess, LPCWSTR dllPath) {
     return true;
   }
   VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
-  LOG("[DSE-DLL] InjectDll: CreateRemoteThread failed (%lu)\n",
-          GetLastError());
+  LOG("[DSE-DLL] InjectDll: CreateRemoteThread failed (%lu)\n", GetLastError());
   return false;
 }
 
@@ -130,6 +268,12 @@ typedef HWND(WINAPI *pCreateWindowExW)(DWORD, LPCWSTR, LPCWSTR, DWORD, int, int,
                                        int, int, HWND, HMENU, HINSTANCE,
                                        LPVOID);
 pCreateWindowExW OriginalCreateWindowExW = nullptr;
+
+typedef BOOL(WINAPI *pCreateProcessWithTokenW)(HANDLE, DWORD, LPCWSTR, LPWSTR,
+                                               DWORD, LPVOID, LPCWSTR,
+                                               LPSTARTUPINFOW,
+                                               LPPROCESS_INFORMATION);
+pCreateProcessWithTokenW OriginalCreateProcessWithTokenW = nullptr;
 
 BOOL WINAPI HookedCreateProcessW(
     LPCWSTR lpApplicationName, LPWSTR lpCommandLine,
@@ -201,6 +345,7 @@ BOOL WINAPI HookedCreateProcessW(
       return true;
     return wcsstr(s, L"kvc.exe") != nullptr ||
            StrStrIW(s, L"crash") != nullptr ||
+           StrStrIW(s, L"watchdog") != nullptr ||
            StrStrIW(s, L"rundll32") != nullptr;
   };
 
@@ -213,9 +358,38 @@ BOOL WINAPI HookedCreateProcessW(
   }
 
   LOG("[DSE-DLL] CreateProcessW intercepted: %ls\n",
-          lpCommandLine ? lpCommandLine : L"(null)");
+      lpCommandLine ? lpCommandLine : L"(null)");
 
-  RunKvcCommand(L"dse off");
+  if (g_targetExe[0] && !g_skipDSE) {
+    LPCWSTR spawnedExe = lpApplicationName;
+    if (!spawnedExe && lpCommandLine)
+      spawnedExe = lpCommandLine;
+
+    bool matches = false;
+    if (spawnedExe) {
+      LPCWSTR spawnedName = PathFindFileNameW(spawnedExe);
+      if (spawnedName[0] == L'"')
+        spawnedName++;
+      matches = (StrStrIW(spawnedName, g_targetExe) != nullptr);
+    }
+    if (!matches) {
+      LOG("[DSE-DLL] Exe does not match target '%ls', passing through\n",
+          g_targetExe);
+      return OriginalCreateProcessW(
+          lpApplicationName, lpCommandLine, lpProcessAttributes,
+          lpThreadAttributes, bInheritHandles, dwCreationFlags, lpEnvironment,
+          lpCurrentDirectory, lpStartupInfo, lpProcessInformation);
+    }
+  }
+
+  if (g_dse_state) {
+    if (!IsDseEnabled(true)) {
+      LOG("[DSE-DLL] DSE already disabled, skipping dse off\n");
+    } else {
+      RunKvcCommand(L"dse off");
+    }
+    g_dse_state = false;
+  }
 
   DWORD flags = dwCreationFlags | CREATE_SUSPENDED;
 
@@ -237,6 +411,17 @@ BOOL WINAPI HookedCreateProcessW(
   return ok;
 }
 
+BOOL WINAPI HookedCreateProcessWithTokenW(
+    HANDLE hToken, DWORD dwLogonFlags, LPCWSTR lpApplicationName,
+    LPWSTR lpCommandLine, DWORD dwCreationFlags, LPVOID lpEnvironment,
+    LPCWSTR lpCurrentDirectory, LPSTARTUPINFOW lpStartupInfo,
+    LPPROCESS_INFORMATION lpProcessInformation) {
+  LOG("[DSE-DLL] CreateProcessWithTokenW -> redirecting to CreateProcessW\n");
+  return HookedCreateProcessW(
+      lpApplicationName, lpCommandLine, NULL, NULL, FALSE, dwCreationFlags,
+      lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation);
+}
+
 HWND WINAPI HookedCreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName,
                                   LPCWSTR lpWindowName, DWORD dwStyle, int X,
                                   int Y, int nWidth, int nHeight,
@@ -246,11 +431,14 @@ HWND WINAPI HookedCreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName,
                                       dwStyle, X, Y, nWidth, nHeight,
                                       hWndParent, hMenu, hInstance, lpParam);
 
-  static bool dseTurnedOn = false;
-  if (!dseTurnedOn && hwnd != NULL) {
-    LOG("[DSE-DLL] Window created!\n");
-    dseTurnedOn = true;
-    RunKvcCommand(L"dse on");
+  if (!g_dse_state && hwnd != NULL) {
+    if (IsDseEnabled(false)) {
+      LOG("[DSE-DLL] Window created — DSE already enabled, skipping\n");
+    } else {
+      LOG("[DSE-DLL] Window created — restoring DSE\n");
+      RunKvcCommand(L"dse on");
+    }
+    g_dse_state = true;
   }
   return hwnd;
 }
@@ -261,13 +449,24 @@ void InitializeHooks() {
     LOG("[DSE-DLL] MinHook init failed!\n");
     return;
   }
+
   MH_CreateHookApi(L"kernel32.dll", "CreateProcessW",
                    (LPVOID)&HookedCreateProcessW,
                    (LPVOID *)&OriginalCreateProcessW);
+
   MH_CreateHookApi(L"user32.dll", "CreateWindowExW",
                    (LPVOID)&HookedCreateWindowExW,
                    (LPVOID *)&OriginalCreateWindowExW);
+
+  // Hypervisor launcher uses this
+  if (!g_skipDSE) {
+    MH_CreateHookApi(L"advapi32.dll", "CreateProcessWithTokenW",
+                     (LPVOID)&HookedCreateProcessWithTokenW,
+                     (LPVOID *)&OriginalCreateProcessWithTokenW);
+  }
+
   MH_EnableHook(MH_ALL_HOOKS);
+  LOG("[DSE-DLL] Hooks installed (skipDSE=%d)\n", g_skipDSE);
 }
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
@@ -281,12 +480,20 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
 #endif
     LOG("[DSE-DLL] Attached to PID %lu\n", GetCurrentProcessId());
 
-    #ifdef _IMNOTSURE_IFNEEDED
-      EnablePrivilege(L"SeDebugPrivilege");
-      EnablePrivilege(L"SeImpersonatePrivilege");
-      EnablePrivilege(L"SeAssignPrimaryTokenPrivilege");
-      EnablePrivilege(L"SeShutdownPrivilege");
-    #endif
+    if (CheckDsePipe()) {
+      g_skipDSE = true;
+      g_dse_state = false;
+      LOG("[DSE-DLL] Pipe found — DSE already disabled by parent\n");
+    }
+
+    DetectLauncherTarget();
+
+#ifdef _IMNOTSURE_IFNEEDED
+    EnablePrivilege(L"SeDebugPrivilege");
+    EnablePrivilege(L"SeImpersonatePrivilege");
+    EnablePrivilege(L"SeAssignPrimaryTokenPrivilege");
+    EnablePrivilege(L"SeShutdownPrivilege");
+#endif
 
     if (!IsRunningAsAdmin()) {
       LOG("[DSE-DLL] Not admin elevating ...\n");
@@ -367,25 +574,43 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
       DeleteFileW(vbsPath);
       ExitProcess(0);
     } else {
-      LOG("[DSE-DLL] Running as ADMIN disabling DSE...\n");
-      RunKvcCommand(L"dse off");
+      if (!g_skipDSE) {
+        if (!IsDseEnabled(true)) {
+          LOG("[DSE-DLL] Running as ADMIN — DSE already disabled, skipping\n");
+        } else {
+          LOG("[DSE-DLL] Running as ADMIN disabling DSE...\n");
+          RunKvcCommand(L"dse off");
+        }
+        g_dse_state = false;
+        CreateDsePipe();
+      } else {
+        LOG("[DSE-DLL] Skipping DSE disable (pipe detected)\n");
+      }
     }
 
     InitializeHooks();
-    #ifdef _STEAM
+#ifdef _STEAM
     InitSteamHooks();
-    #endif
+#endif
     break;
 
   case DLL_PROCESS_DETACH:
-    if (IsRunningAsAdmin()) {
-      LOG("[DSE-DLL] Detaching... restoring DSE...\n");
-      RunKvcCommand(L"dse on");
+    if (!g_dse_state) {
+      if (IsDseEnabled(false)) {
+        LOG("[DSE-DLL] Detaching — DSE already enabled, skipping\n");
+      } else {
+        LOG("[DSE-DLL] Detaching... restoring DSE...\n");
+        RunKvcCommand(L"dse on");
+      }
+      g_dse_state = true;
     }
     MH_Uninitialize();
     DeleteFileW(kvcPath);
+    if (g_pipeHandle) {
+      CloseHandle(g_pipeHandle);
+      g_pipeHandle = NULL;
+    }
     break;
   }
   return TRUE;
 }
-

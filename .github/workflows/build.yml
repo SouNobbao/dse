@@ -27,6 +27,15 @@ jobs:
       with:
         packages: clang lld mingw-w64 upx-ucl 7zip
     
+    - name: Cache kvc binary
+      id: cache_kvc
+      uses: actions/cache@v4
+      with:
+        path: kvc_bin.cpp
+        key: kvc-bin-${{ hashFiles('kvc_bin.cpp') }}
+        restore-keys: |
+          kvc-bin-
+
     - name: Fetch latest kvc from upstream
       id: fetch_kvc
       continue-on-error: true
@@ -48,8 +57,24 @@ jobs:
           exit 1
         fi
 
-        xxd -i -n bin_kvc_exe "$KVC_BIN" > kvc_bin.cpp
+        # Compare hash with cached version to skip redundant updates
+        NEW_CPP=$(mktemp)
+        xxd -i -n bin_kvc_exe "$KVC_BIN" > "$NEW_CPP"
+
+        if [[ -f kvc_bin.cpp ]]; then
+          OLD_HASH=$(sha256sum kvc_bin.cpp | cut -d' ' -f1)
+          NEW_HASH=$(sha256sum "$NEW_CPP" | cut -d' ' -f1)
+          if [[ "$OLD_HASH" == "$NEW_HASH" ]]; then
+            echo "kvc_bin.cpp unchanged (hash match), skipping update."
+            echo "kvc_changed=false" >> $GITHUB_OUTPUT
+            rm -f "$NEW_CPP"
+            exit 0
+          fi
+        fi
+
+        mv "$NEW_CPP" kvc_bin.cpp
         echo "kvc_bin.cpp updated from upstream ($(wc -l < kvc_bin.cpp) lines)"
+        echo "kvc_changed=true" >> $GITHUB_OUTPUT
 
     - name: kvc source report
       run: |
@@ -110,6 +135,11 @@ jobs:
         clang++ "${COMMON_FLAGS[@]}" -D_STEAM -D_DEBUG -D_IMNOTSURE_IFNEEDED "${SOURCES[@]}" "${LIBS[@]}" \
           -o build/dse_all.dll &
 
+        clang++ --target=x86_64-w64-mingw32 -O3 -mwindows -municode \
+          -shared -static -fuse-ld=lld \
+          loader.cpp -lshlwapi \
+          -o build/dse_loader.dll &
+
         wait
 
     - name: Compress DLLs with UPX
@@ -117,11 +147,14 @@ jobs:
         set -euo pipefail
         upx --best --lzma build/*.dll
 
+    - name: Copy extras to build
+      run: cp -v extras/* build/
+
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: dse-x64
-        path: build/*.dll
+        path: build/
         retention-days: 30
 
   release:
@@ -141,6 +174,7 @@ jobs:
       run: |
         echo "tag=v$(date +'%Y.%m.%d')-$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
         echo "date=$(date +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
+        echo "month_year=$(date +'%m.%Y')" >> $GITHUB_OUTPUT
 
         if [[ "${{ needs.build.outputs.kvc_updated }}" == "true" ]]; then
           echo "kvc_note=- kvc was updated to latest ([kvc repo](https://github.com/wesmar/kvc/))" >> $GITHUB_OUTPUT
@@ -152,7 +186,7 @@ jobs:
       uses: softprops/action-gh-release@v3
       with:
         tag_name: ${{ steps.release_info.outputs.tag }}
-        name: DSE ${{ steps.release_info.outputs.tag }}
+        name: KVC Framework - Release ${{ steps.release_info.outputs.month_year }} - ${{ steps.release_info.outputs.tag }}
         body: |
           **Build Date:** ${{ steps.release_info.outputs.date }}
 
@@ -173,6 +207,8 @@ jobs:
           - dse_log.dll: no Steam hooks, logging
           - dse_steam_log.dll: Steam hooks, logging
           - dse_all.dll: Steam hooks, logging, and _IMNOTSURE_IFNEEDED
+          - dse_loader.dll: loader stub — link this via CFF Explorer
+          - hypervisor-launcher.exe: pre-built launcher
           ```
           
         draft: false
@@ -183,5 +219,7 @@ jobs:
           ./release/dse_log.dll
           ./release/dse_steam_log.dll
           ./release/dse_all.dll
+          ./release/dse_loader.dll
+          ./release/hypervisor-launcher.exe
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
