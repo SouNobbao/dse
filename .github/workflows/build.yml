@@ -16,7 +16,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     outputs:
-      kvc_updated: ${{ steps.fetch_kvc.outcome == 'success' }}
+      kvc_updated: ${{ steps.fetch_kvc.outputs.kvc_changed == 'true' }}
 
     steps:
     - name: Checkout code
@@ -178,7 +178,7 @@ jobs:
         echo "month_year=$MONTH_YEAR" >> "$GITHUB_OUTPUT"
 
         if [[ "${{ needs.build.outputs.kvc_updated }}" == "true" ]]; then
-          echo "kvc_note=- kvc was updated to latest ([kvc repo](https://github.com/wesmar/kvc/) - `KVC Framework - Release $MONTH_YEAR`)" >> "$GITHUB_OUTPUT"
+          echo "kvc_note=> kvc was updated to latest ([kvc repo](https://github.com/wesmar/kvc/) - `KVC Framework - Release $MONTH_YEAR`)" >> "$GITHUB_OUTPUT"
         else
           echo "kvc_note=" >> "$GITHUB_OUTPUT"
         fi
@@ -208,7 +208,7 @@ jobs:
           - dse_log.dll: no Steam hooks, logging
           - dse_steam_log.dll: Steam hooks, logging
           - dse_all.dll: Steam hooks, logging, and _IMNOTSURE_IFNEEDED
-          - dse_loader.dll: loader stub — link this via CFF Explorer
+          - dse_loader.dll: loader used for injection onto a launcher (link with CFF Explorer)
           - `hypervisor-launcher.exe`, `steamclient_loader_x64.exe`: hypervisor launcher exe alterady with dse_loader.dll linked.
 
           ```

@@ -5,20 +5,6 @@ How to use
 1. Add to load dll section 
 2. Happy
 
-## linking the dll (for these launchers)
-
-You need to add `loader.dll` to the exe's import table so it loads automatically.
-
-### CFF Explorer (GUI)
-1. Open your exe in [CFF Explorer](https://ntcore.com/explorer-suite/)
-2. Go to Import Adder
-3. Click Add -> browse to `loader.dll`
-4. Select the available export -> click with Import by Name
-5. Click Rebuild Import Table -> save the exe
-6. Drop `dse.dll` next to the exe
-
-- or just grab the launcher in releases build...
-
 ## steam version (overlay + input)
 
 1. Add to load dll section 
@@ -26,6 +12,19 @@ You need to add `loader.dll` to the exe's import table so it loads automatically
 3. Use [OpenSteamTool](https://github.com/OpenSteam001/OpenSteamTool) 
 4. Get these games (steam/config/lua <- lua files go here), manifests go into steamdepot/cache
 5. Click Play!!!111
+
+## linking the dll (for these launchers)
+
+### CFF Explorer (GUI)
+1. Open your exe in [CFF Explorer](https://ntcore.com/explorer-suite/)
+2. Go to Import Adder
+3. Click Add -> browse to `dse_loader.dll`
+4. Select the available export -> click with Import by Name
+5. Click Rebuild Import Table -> save the exe
+6. Drop `dse.dll` next to the exe
+
+- or just grab the launcher in releases build...
+
 
 # flavours of shit code !!
 
@@ -36,7 +35,7 @@ You need to add `loader.dll` to the exe's import table so it loads automatically
 | `dse_log.dll` | base build + console + `dse-dll.log` |
 | `dse_steam_log.dll` | Steam hooks + console/logging |
 | `dse_all.dll` | everything above + extra paranoid stuff |
-| `dse_loader.dll` | loader stub for other exes|
+| `dse_loader.dll` | loader stub for other exes |
 
 # what this code does
 mainly drops kvc and a vbs script to elevate in temp\
