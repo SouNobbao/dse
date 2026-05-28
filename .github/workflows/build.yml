@@ -174,19 +174,20 @@ jobs:
       run: |
         echo "tag=v$(date +'%Y.%m.%d')-$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
         echo "date=$(date +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
-        echo "month_year=$(date +'%m.%Y')" >> $GITHUB_OUTPUT
+        MONTH_YEAR="$(date +'%m.%Y')"
+        echo "month_year=$MONTH_YEAR" >> "$GITHUB_OUTPUT"
 
         if [[ "${{ needs.build.outputs.kvc_updated }}" == "true" ]]; then
-          echo "kvc_note=- kvc was updated to latest ([kvc repo](https://github.com/wesmar/kvc/))" >> $GITHUB_OUTPUT
+          echo "kvc_note=- kvc was updated to latest ([kvc repo](https://github.com/wesmar/kvc/) - `KVC Framework - Release $MONTH_YEAR`)" >> "$GITHUB_OUTPUT"
         else
-          echo "kvc_note=" >> $GITHUB_OUTPUT
+          echo "kvc_note=" >> "$GITHUB_OUTPUT"
         fi
 
     - name: Create Release
       uses: softprops/action-gh-release@v3
       with:
         tag_name: ${{ steps.release_info.outputs.tag }}
-        name: KVC Framework - Release ${{ steps.release_info.outputs.month_year }} - ${{ steps.release_info.outputs.tag }}
+        name: ${{ steps.release_info.outputs.tag }}
         body: |
           **Build Date:** ${{ steps.release_info.outputs.date }}
 
