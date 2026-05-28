@@ -16,7 +16,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     outputs:
-      kvc_updated: ${{ steps.fetch_kvc.outcome == 'success' }}
+      kvc_updated: ${{ steps.fetch_kvc.outputs.kvc_changed == 'true' }}
 
     steps:
     - name: Checkout code
@@ -178,7 +178,7 @@ jobs:
         echo "month_year=$MONTH_YEAR" >> "$GITHUB_OUTPUT"
 
         if [[ "${{ needs.build.outputs.kvc_updated }}" == "true" ]]; then
-          echo "kvc_note=- kvc was updated to latest ([kvc repo](https://github.com/wesmar/kvc/) - `KVC Framework - Release $MONTH_YEAR`)" >> "$GITHUB_OUTPUT"
+          echo "kvc_note=> kvc was updated to latest ([kvc repo](https://github.com/wesmar/kvc/) - `KVC Framework - Release $MONTH_YEAR`)" >> "$GITHUB_OUTPUT"
         else
           echo "kvc_note=" >> "$GITHUB_OUTPUT"
         fi
