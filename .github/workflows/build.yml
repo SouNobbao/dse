@@ -150,6 +150,10 @@ jobs:
     - name: Copy extras to build
       run: cp -v extras/* build/
 
+    - name: Create archive for release
+      run: |
+        7z a -t7z build/build.7z build/* -x!build/build.7z
+
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
@@ -224,5 +228,6 @@ jobs:
           ./release/dse_loader.dll
           ./release/hypervisor-launcher.exe
           ./release/steamclient_loader_x64.exe
+          ./release/build.7z
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
