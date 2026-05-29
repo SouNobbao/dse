@@ -238,6 +238,8 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
                                                            LPSTR lpszCmdLine,
                                                            int nCmdShow) {
   InitLogPath(g_hModule);
+  LoadDseConfig(g_hModule);
+  g_loggingEnabled = g_config.logging;
   LOG("[WATCHDOG] Started with args: %s\n", lpszCmdLine);
 
   char *p = lpszCmdLine;

@@ -9,7 +9,7 @@
 #include <shlwapi.h>
 #include <stdio.h>
 
-static bool g_loggingEnabled = true;
+static bool g_loggingEnabled = false;
 
 static WCHAR g_logPath[MAX_PATH] = {0};
 
