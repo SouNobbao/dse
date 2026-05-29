@@ -41,6 +41,8 @@ once we elevate the owo stuff should not require more elevation and start the se
 # currently supported launchers
 - hypervisor-launcher.exe
 - steamclient_loader_x64.exe (i hope)
+> [!NOTE]
+> To add more launchers add their configuration under launchers.h
 
 # stuff to fix
 - [] Relaunch MSI AFTERBURNER

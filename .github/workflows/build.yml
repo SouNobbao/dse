@@ -206,24 +206,15 @@ jobs:
 
           ```
           Includes:
-          - dse.dll: no Steam hooks, no logging
-          - dse_steam.dll: Steam hooks, no logging
-          - dse_log.dll: no Steam hooks, logging
-          - dse_steam_log.dll: Steam hooks, logging
-          - dse_all.dll: Steam hooks, logging, and _IMNOTSURE_IFNEEDED
+          - dse.dll : toggle dse modes via kvc (check dse.ini for config)
           - dse_loader.dll: loader used for injection onto a launcher (link with CFF Explorer)
           - `hypervisor-launcher.exe`, `steamclient_loader_x64.exe`: hypervisor launcher exe alterady with dse_loader.dll linked.
-
           ```
           
         draft: false
         prerelease: false
         files: |
           ./release/dse.dll
-          ./release/dse_steam.dll
-          ./release/dse_log.dll
-          ./release/dse_steam_log.dll
-          ./release/dse_all.dll
           ./release/dse_loader.dll
           ./release/hypervisor-launcher.exe
           ./release/steamclient_loader_x64.exe

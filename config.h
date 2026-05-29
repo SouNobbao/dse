@@ -15,7 +15,7 @@ struct DseConfig {
   bool logging;
 };
 
-static DseConfig g_config = {true, false, true, true};
+static DseConfig g_config = {true, true, false, false};
 
 static bool ReadIniBool(LPCWSTR section, LPCWSTR key, bool defaultVal,
                         LPCWSTR iniPath) {
@@ -59,7 +59,7 @@ static void LoadDseConfig(HMODULE hModule) {
   }
 
   g_config.toggleDse = ReadIniBool(L"dse", L"toggleDse", true, iniPath);
-  g_config.dseSafeMode = ReadIniBool(L"dse", L"dseSafeMode", false, iniPath);
+  g_config.dseSafeMode = ReadIniBool(L"dse", L"dseSafeMode", true, iniPath);
   g_config.steamHooks = ReadIniBool(L"dse", L"steamHooks", false, iniPath);
   g_config.logging = ReadIniBool(L"dse", L"logging", false, iniPath);
 }
