@@ -178,7 +178,7 @@ jobs:
         set -euo pipefail
         cd release
         {
-          echo "sha256<<'EOF'"
+          echo "sha256<<EOF"
           find . -maxdepth 1 -type f ! -name 'sha256hashes.txt' -print0 | sort -z | xargs -0 sha256sum | sed 's|^\([a-f0-9]\+\)  \./|\1  |' | tee sha256hashes.txt
           echo "EOF"
         } >> "$GITHUB_OUTPUT"
