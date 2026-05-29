@@ -113,14 +113,11 @@ BOOL WINAPI HookedCreateProcessW(
 			lpCurrentDirectory, lpStartupInfo, lpProcessInformation);
 	};
 
-	static std::once_flag s_once;
 	static WCHAR s_gameDir[MAX_PATH]{};
-	std::call_once(s_once, []() {
-		if (GetModuleFileNameW(nullptr, s_gameDir, MAX_PATH)) {
-			PathRemoveFileSpecW(s_gameDir);
-			PathAddBackslashW(s_gameDir);
-		}
-	});
+	if (GetModuleFileNameW(nullptr, s_gameDir, MAX_PATH)) {
+		PathRemoveFileSpecW(s_gameDir);
+		PathAddBackslashW(s_gameDir);
+	}
 
 	auto cmdLineToExePath = [](LPCWSTR cmdLine, WCHAR *out, int outLen) {
 		out[0] = L'\0';
