@@ -1,12 +1,7 @@
 #pragma once
 
-#include <cstdio>
-
 #define WIN32_LEAN_AND_MEAN
-#include <shlwapi.h>
 #include <windows.h>
-
-#pragma comment(lib, "shlwapi.lib")
 
 struct DseConfig {
   bool toggleDse;
@@ -15,51 +10,6 @@ struct DseConfig {
   bool logging;
 };
 
-static DseConfig g_config = {true, true, false, false};
+extern DseConfig g_config;
 
-static bool ReadIniBool(LPCWSTR section, LPCWSTR key, bool defaultVal,
-                        LPCWSTR iniPath) {
-  WCHAR buf[16]{};
-  GetPrivateProfileStringW(section, key, defaultVal ? L"true" : L"false", buf,
-                           ARRAYSIZE(buf), iniPath);
-  if (_wcsicmp(buf, L"true") == 0 || _wcsicmp(buf, L"1") == 0 ||
-      _wcsicmp(buf, L"yes") == 0)
-    return true;
-  if (_wcsicmp(buf, L"false") == 0 || _wcsicmp(buf, L"0") == 0 ||
-      _wcsicmp(buf, L"no") == 0)
-    return false;
-  return defaultVal;
-}
-static void GetDseIniPath(HMODULE hModule, WCHAR *outPath, DWORD maxLen) {
-  outPath[0] = L'\0';
-  WCHAR dllDir[MAX_PATH]{};
-  if (!GetModuleFileNameW(hModule, dllDir, MAX_PATH))
-    return;
-  PathRemoveFileSpecW(dllDir);
-  lstrcpynW(outPath, dllDir, maxLen);
-  PathAppendW(outPath, L"dse.ini");
-}
-
-static void LoadDseConfig(HMODULE hModule) {
-  WCHAR iniPath[MAX_PATH]{};
-  GetDseIniPath(hModule, iniPath, MAX_PATH);
-
-  if (GetFileAttributesW(iniPath) == INVALID_FILE_ATTRIBUTES) {
-    FILE *file = _wfopen(iniPath, L"w");
-    if (file) {
-      fwprintf(file, L"[dse]\n; Auto dse toggle (NOTE: if dse was off before "
-                     L"kvc wont run)\ntoggleDse=true\n; Appends --safe to all "
-                     L"kvc commands\ndseSafeMode=true\n; Enable/disable Steam "
-                     L"API hooks\nsteamHooks=false\n; Enable/disable logging "
-                     L"output\nlogging=false");
-
-      fclose(file);
-    }
-    return;
-  }
-
-  g_config.toggleDse = ReadIniBool(L"dse", L"toggleDse", true, iniPath);
-  g_config.dseSafeMode = ReadIniBool(L"dse", L"dseSafeMode", true, iniPath);
-  g_config.steamHooks = ReadIniBool(L"dse", L"steamHooks", false, iniPath);
-  g_config.logging = ReadIniBool(L"dse", L"logging", false, iniPath);
-}
+void LoadDseConfig(HMODULE hModule);

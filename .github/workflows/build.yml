@@ -94,11 +94,13 @@ jobs:
 
         COMMON_FLAGS=(
           --target=x86_64-w64-mingw32
-          -O3
+          -Oz
           -mwindows
           -municode
           -shared
           -static
+          -x
+          c++
           -fuse-ld=lld
           -Iminhook/include
           -ffunction-sections
@@ -116,7 +118,13 @@ jobs:
         )
 
         SOURCES=(
+          config.cpp
           dllmain.cpp
+          events.cpp
+          injector.cpp
+          kvc.cpp
+          log.cpp
+          watchdog.cpp
           minhook/src/buffer.c
           minhook/src/hook.c
           minhook/src/trampoline.c
@@ -133,11 +141,6 @@ jobs:
 
         clang++ "${COMMON_FLAGS[@]}" "${SOURCES[@]}" "${LIBS[@]}" \
           -o build/dse.dll &
-
-        clang++ --target=x86_64-w64-mingw32 -O3 -mwindows -municode \
-          -shared -static -fuse-ld=lld \
-          loader.cpp -lshlwapi \
-          -o build/dse_loader.dll &
 
         wait
 
@@ -214,12 +217,11 @@ jobs:
           
           ```
           Includes:
-          - dse.dll : toggle dse modes via kvc (check dse.ini for config) - 
-          - dse_loader.dll: loader used for injection onto a launcher (link with CFF Explorer) - needs to be supported under launchers.h
+          - dse.dll : toggle dse modes via kvc (check dse.ini for config) (contains export to add to launchers)
 
-          Launchers (these launchers have dse_loader.dll alterady linked, so you can just replace the original launcher with these, or do it manually):
-          - hypervisor-launcher.exe : 
-          - steamclient_loader_x64.exe : 
+          Launchers (these launchers already have dse.dll linked, so you can replace the original launcher with these or link it manually):
+          - hypervisor-launcher.exe
+          - steamclient_loader_x64.exe
           ```
 
           **SHA-256 Hashes:**
@@ -231,7 +233,6 @@ jobs:
         prerelease: false
         files: |
           ./release/dse.dll
-          ./release/dse_loader.dll
           ./release/hypervisor-launcher.exe
           ./release/steamclient_loader_x64.exe
           ./release/build.7z

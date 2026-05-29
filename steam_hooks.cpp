@@ -1,24 +1,21 @@
-// THIS CODE IS HOT GARBAGE I DID NOT CODE THIS INFACT
-
 #define WIN32_LEAN_AND_MEAN
 
+#include "log.h"
+#include "minhook/include/MinHook.h"
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <shlwapi.h>
 #include <windows.h>
-#include "log.h"
-#include "minhook/include/MinHook.h"
 
 static uint64_t g_fakeSteamID = 76561198000000000ULL; // default SteamID
-static uint64_t g_realSteamID = 0; // captured from first real GetSteamID call
-static bool g_forceOffline = true; // default: appear offline
+static bool g_forceOffline = true;                    // default: appear offline
 static bool g_steamHooked = false;
 static char g_steamPath[MAX_PATH] = {}; // Steam install path (UTF-8)
 
-// ─── Steam API Hooks ─────────────────────────────────────────────────────────
+// Steam API hooks
 
-// ─── Read config from steam_settings/configs.user.ini ────────────────────────
+// Read config from steam_settings.
 static void LoadSteamConfigFromDll(HMODULE hSteamApi) {
   WCHAR dllDir[MAX_PATH]{};
   if (!GetModuleFileNameW(hSteamApi, dllDir, MAX_PATH))
@@ -31,7 +28,7 @@ static void LoadSteamConfigFromDll(HMODULE hSteamApi) {
 
   if (GetFileAttributesW(userIniPath) == INVALID_FILE_ATTRIBUTES) {
     LOG("[DSE-DLL] No steam_settings/configs.user.ini found, using default "
-            "SteamID\n");
+        "SteamID\n");
   } else {
     WCHAR buf[64]{};
     GetPrivateProfileStringW(L"user::general", L"account_steamid", L"0", buf,
@@ -42,10 +39,10 @@ static void LoadSteamConfigFromDll(HMODULE hSteamApi) {
     if (parsed > 0) {
       g_fakeSteamID = parsed;
       LOG("[DSE-DLL] Config: SteamID = %llu (from configs.user.ini)\n",
-              (unsigned long long)g_fakeSteamID);
+          (unsigned long long)g_fakeSteamID);
     } else {
       LOG("[DSE-DLL] No valid account_steamid in configs.user.ini, using "
-              "default\n");
+          "default\n");
     }
   }
 
@@ -57,8 +54,7 @@ static void LoadSteamConfigFromDll(HMODULE hSteamApi) {
   GetPrivateProfileStringW(L"main::connectivity", L"offline", L"1", offBuf,
                            ARRAYSIZE(offBuf), mainIniPath);
   g_forceOffline = (offBuf[0] == L'1');
-  LOG("[DSE-DLL] Config: offline = %s\n",
-          g_forceOffline ? "true" : "false");
+  LOG("[DSE-DLL] Config: offline = %s\n", g_forceOffline ? "true" : "false");
 
   WCHAR dseIniPath[MAX_PATH]{};
   lstrcpynW(dseIniPath, dllDir, MAX_PATH);
@@ -68,11 +64,11 @@ static void LoadSteamConfigFromDll(HMODULE hSteamApi) {
   GetPrivateProfileStringW(L"main", L"steam_path", L"", pathBuf,
                            ARRAYSIZE(pathBuf), dseIniPath);
   if (pathBuf[0]) {
-    WideCharToMultiByte(CP_UTF8, 0, pathBuf, -1, g_steamPath, MAX_PATH,
-                        nullptr, nullptr);
+    WideCharToMultiByte(CP_UTF8, 0, pathBuf, -1, g_steamPath, MAX_PATH, nullptr,
+                        nullptr);
     LOG("[DSE-DLL] Config: steam_path = %s\n", g_steamPath);
   }
-  
+
   auto TryReadAppId = [](LPCWSTR path, uint32_t &outId) -> bool {
     HANDLE hFile = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr,
                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -85,12 +81,15 @@ static void LoadSteamConfigFromDll(HMODULE hSteamApi) {
     uint32_t appId = 0;
     for (DWORD i = 0; i < read && idBuf[i] >= '0' && idBuf[i] <= '9'; i++)
       appId = appId * 10 + (idBuf[i] - '0');
-    if (appId > 0) { outId = appId; return true; }
+    if (appId > 0) {
+      outId = appId;
+      return true;
+    }
     return false;
   };
 
   WCHAR exeDir[MAX_PATH]{};
-  GetModuleFileNameW(NULL, exeDir, MAX_PATH);
+  GetModuleFileNameW(nullptr, exeDir, MAX_PATH);
   PathRemoveFileSpecW(exeDir);
 
   WCHAR rootAppIdPath[MAX_PATH]{};
@@ -108,28 +107,30 @@ static void LoadSteamConfigFromDll(HMODULE hSteamApi) {
   if (foundInRoot) {
     LOG("[DSE-DLL] steam_appid.txt found in game root, AppId = %u\n", appId);
   } else if (foundInSettings) {
-    LOG("[DSE-DLL] steam_appid.txt found in steam_settings, AppId = %u\n", appId);
+    LOG("[DSE-DLL] steam_appid.txt found in steam_settings, AppId = %u\n",
+        appId);
     if (!CopyFileW(settingsAppIdPath, rootAppIdPath, FALSE)) {
-      LOG("[DSE-DLL] WARNING: Failed to copy steam_appid.txt to root (err %lu)\n",
-              GetLastError());
+      LOG("[DSE-DLL] WARNING: Failed to copy steam_appid.txt to root (err "
+          "%lu)\n",
+          GetLastError());
     } else {
       LOG("[DSE-DLL] Copied steam_appid.txt to game root\n");
     }
   } else {
-    LOG("[DSE-DLL] WARNING: steam_appid.txt not found in root or steam_settings\n");
+    LOG("[DSE-DLL] WARNING: steam_appid.txt not found in root or "
+        "steam_settings\n");
   }
 
   if (appId > 0) {
     char envBuf[32];
     sprintf(envBuf, "%u", appId);
-    SetEnvironmentVariableA("SteamAppId",  envBuf);
+    SetEnvironmentVariableA("SteamAppId", envBuf);
     SetEnvironmentVariableA("SteamGameId", envBuf);
     LOG("[DSE-DLL] Set env SteamAppId/SteamGameId = %u\n", appId);
   }
 }
 
-// ─── Typedefs
-// ─────────────────────────────────────────────────────────────────
+// Typedefs
 typedef bool (*pfn_RestartAppIfNecessary)(uint32_t);
 typedef uint64_t (*pfn_GetSteamID)(void *);
 typedef bool (*pfn_BLoggedOn)(void *);
@@ -157,15 +158,13 @@ static pfn_SteamInternal_FindOrCreateUserInterface
     Orig_FindOrCreateUserInterface = nullptr;
 static pfn_SteamAPI_GetHSteamUser Orig_GetHSteamUser = nullptr;
 
-
-// ─── VTable state
-// ─────────────────────────────────────────────────────────────
+// VTable state
 static void **g_pISteamUserVTable = nullptr;
 static void **g_pISteamFriendsVTable = nullptr;
 
-// ─── VTable typedefs ─────────────────────────────────────────────────────────
+// VTable typedefs
 // CSteamID has constructors, so MSVC x64 returns it via hidden pointer in RDX.
-typedef void* (*pfn_GetSteamID_vtable)(void *self, void *pOut);
+typedef void *(*pfn_GetSteamID_vtable)(void *self, void *pOut);
 static pfn_GetSteamID_vtable Orig_GetSteamID_vtable = nullptr;
 
 typedef bool (*pfn_BLoggedOn_vtable)(void *);
@@ -183,40 +182,32 @@ static uint64_t Hooked_GetSteamID(void *self) {
   uint64_t orig = 0;
   if (Orig_GetSteamID)
     orig = Orig_GetSteamID(self);
-  if (!g_realSteamID && orig)
-    g_realSteamID = orig;
   LOG("[DSE-DLL] SteamAPI_ISteamUser_GetSteamID orig=%llu -> %llu\n",
-          (unsigned long long)orig,
-          (unsigned long long)g_fakeSteamID);
+      (unsigned long long)orig, (unsigned long long)g_fakeSteamID);
   return g_fakeSteamID;
 }
 
 static bool Hooked_BLoggedOn(void *self) {
   bool orig = Orig_BLoggedOn ? Orig_BLoggedOn(self) : false;
-  LOG("[DSE-DLL] SteamAPI_ISteamUser_BLoggedOn orig=%d -> true\n", orig);
+  LOG("[DSE-DLL] SteamAPI_ISteamUser_BLoggedOn orig=%d -> false\n", orig);
   return false;
-  // honestly this set to true causes less call spam non ironically.
 }
 
 static int Hooked_GetPersonaState(void *self) {
   int orig = Orig_GetPersonaState ? Orig_GetPersonaState(self) : 0;
   int state = g_forceOffline ? 0 : 1;
-  LOG("[DSE-DLL] SteamAPI_ISteamFriends_GetPersonaState orig=%d -> %d\n",
-          orig, state);
+  LOG("[DSE-DLL] SteamAPI_ISteamFriends_GetPersonaState orig=%d -> %d\n", orig,
+      state);
   return state;
 }
 
-// ─── VTable hooks
-// ─────────────────────────────────────────────────────────────
-static void* Hooked_GetSteamID_vtable(void *self, uint64_t *pOut) {
+// VTable hooks
+static void *Hooked_GetSteamID_vtable(void *self, uint64_t *pOut) {
   if (Orig_GetSteamID_vtable)
     Orig_GetSteamID_vtable(self, pOut);
   if (pOut) {
-    if (!g_realSteamID && *pOut)
-      g_realSteamID = *pOut;
     LOG("[DSE-DLL] ISteamUser::GetSteamID() orig=%llu -> %llu\n",
-            (unsigned long long)*pOut,
-            (unsigned long long)g_fakeSteamID);
+        (unsigned long long)*pOut, (unsigned long long)g_fakeSteamID);
     *pOut = g_fakeSteamID;
   }
   return pOut;
@@ -233,11 +224,11 @@ static int Hooked_GetPersonaState_vtable(void *self) {
       Orig_GetPersonaState_vtable ? Orig_GetPersonaState_vtable(self) : 0;
   int state = g_forceOffline ? 0 : 1;
   LOG("[DSE-DLL] ISteamFriends::GetPersonaState() orig=%d -> %d\n", orig,
-          state);
+      state);
   return state;
 }
 
-// ─── Interface hookers
+// Interface hookers
 static void HookInterface_ISteamUser(void *pInterface) {
   if (!pInterface)
     return;
@@ -312,11 +303,10 @@ Hooked_SteamInternal_FindOrCreateUserInterface(int32_t hSteamUser,
   return p;
 }
 
-
-// ─── SteamAPI_GetHSteamUser
-// ─────────────────────────────────────────────────── Intercept so we can
+// SteamAPI_GetHSteamUser
+// Intercept so we can
 // force-install the ISteamUser vtable hook the moment the game resolves its
-// user handle — before it ever calls GetSteamID().
+// user handle before it ever calls GetSteamID().
 static int32_t Hooked_SteamAPI_GetHSteamUser() {
   int32_t hUser = Orig_GetHSteamUser ? Orig_GetHSteamUser() : 0;
   LOG("[DSE-DLL] SteamAPI_GetHSteamUser() = %d\n", hUser);
@@ -327,7 +317,7 @@ static int32_t Hooked_SteamAPI_GetHSteamUser() {
       void *pUser = Orig_FindOrCreateUserInterface(hUser, versions[i]);
       if (pUser) {
         LOG("[DSE-DLL] Force-hooking ISteamUser via %s @ %p\n", versions[i],
-                pUser);
+            pUser);
         HookInterface_ISteamUser(pUser);
         break;
       }
@@ -336,7 +326,7 @@ static int32_t Hooked_SteamAPI_GetHSteamUser() {
   return hUser;
 }
 
-// ─── Dynamic versioned accessor hooks ────────────────────────────────────────
+// Dynamic versioned accessor hooks
 #define HOOK_STEAMUSER(ver)                                                    \
   typedef void *(*pfn_SteamUser##ver)();                                       \
   static pfn_SteamUser##ver Orig_SteamUser##ver = nullptr;                     \
@@ -346,10 +336,17 @@ static int32_t Hooked_SteamAPI_GetHSteamUser() {
     return p;                                                                  \
   }
 
-HOOK_STEAMUSER(015)
-HOOK_STEAMUSER(016) HOOK_STEAMUSER(017) HOOK_STEAMUSER(018) HOOK_STEAMUSER(019)
-    HOOK_STEAMUSER(020) HOOK_STEAMUSER(021) HOOK_STEAMUSER(022)
-        HOOK_STEAMUSER(023) HOOK_STEAMUSER(024) HOOK_STEAMUSER(025)
+HOOK_STEAMUSER(015);
+HOOK_STEAMUSER(016);
+HOOK_STEAMUSER(017);
+HOOK_STEAMUSER(018);
+HOOK_STEAMUSER(019);
+HOOK_STEAMUSER(020);
+HOOK_STEAMUSER(021);
+HOOK_STEAMUSER(022);
+HOOK_STEAMUSER(023);
+HOOK_STEAMUSER(024);
+HOOK_STEAMUSER(025);
 
 #define HOOK_STEAMFRIENDS(ver)                                                 \
   typedef void *(*pfn_SteamFriends##ver)();                                    \
@@ -360,14 +357,19 @@ HOOK_STEAMUSER(016) HOOK_STEAMUSER(017) HOOK_STEAMUSER(018) HOOK_STEAMUSER(019)
     return p;                                                                  \
   }
 
-HOOK_STEAMFRIENDS(010)
-HOOK_STEAMFRIENDS(011) HOOK_STEAMFRIENDS(012) HOOK_STEAMFRIENDS(013)
-    HOOK_STEAMFRIENDS(014) HOOK_STEAMFRIENDS(015) HOOK_STEAMFRIENDS(016)
-        HOOK_STEAMFRIENDS(017) HOOK_STEAMFRIENDS(018) HOOK_STEAMFRIENDS(019)
-            HOOK_STEAMFRIENDS(020)
+HOOK_STEAMFRIENDS(010);
+HOOK_STEAMFRIENDS(011);
+HOOK_STEAMFRIENDS(012);
+HOOK_STEAMFRIENDS(013);
+HOOK_STEAMFRIENDS(014);
+HOOK_STEAMFRIENDS(015);
+HOOK_STEAMFRIENDS(016);
+HOOK_STEAMFRIENDS(017);
+HOOK_STEAMFRIENDS(018);
+HOOK_STEAMFRIENDS(019);
+HOOK_STEAMFRIENDS(020);
 
-// ─── Init hooks
-// ───────────────────────────────────────────────────────────────
+// Init hooks
 static bool Hooked_SteamAPI_Init() {
   LOG("[DSE-DLL] SteamAPI_Init()\n");
   if (Orig_SteamAPI_Init) {
@@ -425,22 +427,22 @@ static const char *Hooked_GetSteamInstallPath() {
   if (Orig_GetSteamInstallPath) {
     const char *p = Orig_GetSteamInstallPath();
     LOG("[DSE-DLL] SteamAPI_GetSteamInstallPath() -> %s (original)\n",
-            p ? p : "(null)");
+        p ? p : "(null)");
     return p;
   }
   return "";
 }
 
-// ─── Resolve Steam path from registry ────────────────────────────────────────
+// Resolve Steam path from registry.
 static void ResolveSteamPath() {
   if (g_steamPath[0])
     return;
-  HKEY hKey = NULL;
+  HKEY hKey = nullptr;
   if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\Valve\\Steam", 0, KEY_READ,
                     &hKey) == ERROR_SUCCESS) {
     DWORD type = 0, size = MAX_PATH;
     char regPath[MAX_PATH]{};
-    if (RegQueryValueExA(hKey, "SteamPath", NULL, &type, (LPBYTE)regPath,
+    if (RegQueryValueExA(hKey, "SteamPath", nullptr, &type, (LPBYTE)regPath,
                          &size) == ERROR_SUCCESS)
       lstrcpynA(g_steamPath, regPath, MAX_PATH);
     RegCloseKey(hKey);
@@ -465,8 +467,7 @@ static void SetSteamEnvVars() {
   LOG("[DSE-DLL] Set SteamPath env = %s\n", g_steamPath);
 }
 
-// ─── Hook all steam_api exports
-// ───────────────────────────────────────────────
+// Hook all steam_api exports.
 static void HookSteamAPI(HMODULE hSteamApi) {
   static bool hooked = false;
   if (hooked)
@@ -474,8 +475,8 @@ static void HookSteamAPI(HMODULE hSteamApi) {
   hooked = true;
   g_steamHooked = true;
 
-  LOG("[DSE-DLL] steam_api64.dll detected @ %p – hooking...\n",
-          (void *)hSteamApi);
+  LOG("[DSE-DLL] steam_api64.dll detected @ %p - hooking...\n",
+      (void *)hSteamApi);
   LoadSteamConfigFromDll(hSteamApi);
   ResolveSteamPath();
   SetSteamEnvVars();
@@ -487,11 +488,11 @@ static void HookSteamAPI(HMODULE hSteamApi) {
       MH_STATUS _s = MH_CreateHook(_p, (LPVOID) & fn, (LPVOID *)&orig);        \
       if (_s == MH_OK) {                                                       \
         MH_EnableHook(_p);                                                     \
-        LOG("[DSE-DLL]   Hooked " label "\n");                             \
+        LOG("[DSE-DLL]   Hooked " label "\n");                                 \
       } else                                                                   \
-        LOG("[DSE-DLL]   Failed to hook " label ": %d\n", _s);             \
+        LOG("[DSE-DLL]   Failed to hook " label ": %d\n", _s);                 \
     } else                                                                     \
-      LOG("[DSE-DLL]   " label " export not found\n");                     \
+      LOG("[DSE-DLL]   " label " export not found\n");                         \
   } while (0)
 
   TRY_HOOK("SteamAPI_RestartAppIfNecessary", Hooked_RestartAppIfNecessary,
@@ -517,7 +518,6 @@ static void HookSteamAPI(HMODULE hSteamApi) {
            Orig_FindOrCreateUserInterface,
            "SteamInternal_FindOrCreateUserInterface");
 
-
   TRY_HOOK("SteamAPI_GetHSteamUser", Hooked_SteamAPI_GetHSteamUser,
            Orig_GetHSteamUser, "SteamAPI_GetHSteamUser");
 
@@ -530,7 +530,7 @@ static void HookSteamAPI(HMODULE hSteamApi) {
       MH_CreateHook(p, (LPVOID) & Hooked_SteamUser##ver,                       \
                     (LPVOID *)&Orig_SteamUser##ver);                           \
       MH_EnableHook(p);                                                        \
-      LOG("[DSE-DLL]   Hooked SteamAPI_SteamUser_v" #ver "\n");            \
+      LOG("[DSE-DLL]   Hooked SteamAPI_SteamUser_v" #ver "\n");                \
     }                                                                          \
   } while (0)
 
@@ -554,7 +554,7 @@ static void HookSteamAPI(HMODULE hSteamApi) {
       MH_CreateHook(p, (LPVOID) & Hooked_SteamFriends##ver,                    \
                     (LPVOID *)&Orig_SteamFriends##ver);                        \
       MH_EnableHook(p);                                                        \
-      LOG("[DSE-DLL]   Hooked SteamAPI_SteamFriends_v" #ver "\n");         \
+      LOG("[DSE-DLL]   Hooked SteamAPI_SteamFriends_v" #ver "\n");             \
     }                                                                          \
   } while (0)
 
@@ -573,8 +573,7 @@ static void HookSteamAPI(HMODULE hSteamApi) {
   LOG("[DSE-DLL] Steam API hooks installed.\n");
 }
 
-// ─── LoadLibrary hooks
-// ────────────────────────────────────────────────────────
+// LoadLibrary hooks
 typedef HMODULE(WINAPI *pfn_LoadLibraryW)(LPCWSTR);
 typedef HMODULE(WINAPI *pfn_LoadLibraryExW)(LPCWSTR, HANDLE, DWORD);
 static pfn_LoadLibraryW Orig_LoadLibraryW = nullptr;
@@ -612,14 +611,13 @@ HMODULE WINAPI Hooked_LoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile,
   return hMod;
 }
 
-// ─── Entry point
-// ──────────────────────────────────────────────────────────────
+// Entry point
 static void InitSteamHooks() {
   HMODULE hExisting = GetModuleHandleW(L"steam_api64.dll");
   if (!hExisting)
     hExisting = GetModuleHandleW(L"steam_api.dll");
   if (hExisting) {
-    LOG("[DSE-DLL] steam_api already loaded – hooking now\n");
+    LOG("[DSE-DLL] steam_api already loaded - hooking now\n");
     HookSteamAPI(hExisting);
     return;
   }
@@ -629,5 +627,5 @@ static void InitSteamHooks() {
                    (LPVOID)&Hooked_LoadLibraryExW,
                    (LPVOID *)&Orig_LoadLibraryExW);
   MH_EnableHook(MH_ALL_HOOKS);
-  LOG("[DSE-DLL] LoadLibrary hooks set – waiting for steam_api64.dll\n");
+  LOG("[DSE-DLL] LoadLibrary hooks set - waiting for steam_api64.dll\n");
 }
