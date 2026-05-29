@@ -172,6 +172,17 @@ jobs:
         name: dse-x64
         path: ./release
 
+    - name: Generate SHA-256 checksums
+      id: checksums
+      run: |
+        set -euo pipefail
+        cd release
+        {
+          echo "sha256<<'EOF'"
+          find . -maxdepth 1 -type f ! -name 'sha256hashes.txt' -print0 | sort -z | xargs -0 sha256sum | sed 's|^\([a-f0-9]\+\)  \./|\1  |' | tee sha256hashes.txt
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+
     - name: Generate release info
       id: release_info
       run: |
@@ -200,15 +211,20 @@ jobs:
 
           > [!NOTE]
           > Please note that all dlls are compressed with UPX, so if you want to analyze them, please just use source code!!
-
-          > [!WARNING]
-          > ONLY USE ONE DLL AT THE TIME DO NOT MIX!!
-
+          
           ```
           Includes:
-          - dse.dll : toggle dse modes via kvc (check dse.ini for config)
-          - dse_loader.dll: loader used for injection onto a launcher (link with CFF Explorer)
-          - `hypervisor-launcher.exe`, `steamclient_loader_x64.exe`: hypervisor launcher exe alterady with dse_loader.dll linked.
+          - dse.dll : toggle dse modes via kvc (check dse.ini for config) - 
+          - dse_loader.dll: loader used for injection onto a launcher (link with CFF Explorer) - needs to be supported under launchers.h
+
+          Launchers (these launchers have dse_loader.dll alterady linked, so you can just replace the original launcher with these, or do it manually):
+          - hypervisor-launcher.exe : 
+          - steamclient_loader_x64.exe : 
+          ```
+
+          **SHA-256 Hashes:**
+          ```
+          ${{ steps.checksums.outputs.sha256 }}
           ```
           
         draft: false
@@ -219,5 +235,6 @@ jobs:
           ./release/hypervisor-launcher.exe
           ./release/steamclient_loader_x64.exe
           ./release/build.7z
+          ./release/sha256hashes.txt
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
