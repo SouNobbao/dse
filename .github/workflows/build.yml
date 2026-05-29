@@ -137,6 +137,7 @@ jobs:
           -luser32
           -lkernel32
           -ladvapi32
+          -lpthread
         )
 
         clang++ "${COMMON_FLAGS[@]}" "${SOURCES[@]}" "${LIBS[@]}" \
