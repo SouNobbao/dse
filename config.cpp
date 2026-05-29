@@ -7,7 +7,7 @@
 
 #pragma comment(lib, "shlwapi.lib")
 
-DseConfig g_config = {true, true, false, false};
+DseConfig g_config = {true, false, false};
 
 static bool ReadIniBool(LPCWSTR section, LPCWSTR key, bool defaultVal,
                         LPCWSTR iniPath) {
@@ -41,9 +41,8 @@ void LoadDseConfig(HMODULE hModule) {
     FILE *file = _wfopen(iniPath, L"w");
     if (file) {
       fwprintf(file, L"[dse]\n; Automatically toggle DSE. If DSE was already "
-                     L"disabled, kvc will not run.\ntoggleDse=true\n; Appends "
-                     L"--safe to all "
-                     L"kvc commands\ndseSafeMode=true\n; Enable/disable Steam "
+                     L"disabled, kvc will not run.\ntoggleDse=true\n"
+                     L"; Enable/disable Steam "
                      L"API hooks\nsteamHooks=false\n; Enable/disable logging "
                      L"output\nlogging=false");
 
@@ -53,7 +52,7 @@ void LoadDseConfig(HMODULE hModule) {
   }
 
   g_config.toggleDse = ReadIniBool(L"dse", L"toggleDse", true, iniPath);
-  g_config.dseSafeMode = ReadIniBool(L"dse", L"dseSafeMode", true, iniPath);
+
   g_config.steamHooks = ReadIniBool(L"dse", L"steamHooks", false, iniPath);
   g_config.logging = ReadIniBool(L"dse", L"logging", false, iniPath);
 }

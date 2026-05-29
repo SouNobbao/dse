@@ -6,9 +6,9 @@
 extern HMODULE g_hModule;
 
 static constexpr LPCWSTR kDseIniName = L"dse.ini";
-static constexpr LPCWSTR kDsePipeName = L"\\\\.\\pipe\\dse_dll";
 static constexpr LPCWSTR kKvcExeName = L"dse_kvc.exe";
-static constexpr LPCWSTR kLockFileName = L"dse_active.lock";
+static constexpr LPCWSTR kLockFileName = L"dse_off_from_start.lock";
+static constexpr LPCWSTR kToggledLockFileName = L"dse_toggled.lock";
 static constexpr LPCWSTR kElevationScriptName = L"dse_elev.vbs";
 
 static constexpr LPCWSTR kElevationVbsTemplate =

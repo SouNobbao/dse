@@ -5,7 +5,6 @@
 
 struct DseConfig {
   bool toggleDse;
-  bool dseSafeMode;
   bool steamHooks;
   bool logging;
 };

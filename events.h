@@ -3,10 +3,10 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-bool CheckDsePipe();
-void CreateDsePipe();
-void CloseDsePipe();
+void CreateDseOffFromStartLock();
+void DeleteDseOffFromStartLock();
+bool DseWasOffFromStart();
 
-void CreateLockFile();
-void DeleteLockFile();
-LPCWSTR GetLockPath();
+void CreateDseToggledLock();
+void DeleteDseToggledLock();
+bool DseWasToggled();

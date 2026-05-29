@@ -7,57 +7,60 @@
 
 #pragma comment(lib, "shlwapi.lib")
 
-static HANDLE g_pipeHandle = nullptr;
 static WCHAR g_lockPath[MAX_PATH] = {0};
+static WCHAR g_toggledPath[MAX_PATH] = {0};
 
-bool CheckDsePipe() {
-  HANDLE h = CreateFileW(kDsePipeName, GENERIC_READ, 0, nullptr, OPEN_EXISTING,
-                         0, nullptr);
-  if (h != INVALID_HANDLE_VALUE) {
-    CloseHandle(h);
-    return true;
-  }
-  return false;
-}
-
-void CreateDsePipe() {
-  if (g_pipeHandle)
-    return;
-
-  g_pipeHandle =
-      CreateNamedPipeW(kDsePipeName, PIPE_ACCESS_OUTBOUND,
-                       PIPE_TYPE_BYTE | PIPE_WAIT, 1, 0, 0, 0, nullptr);
-  if (g_pipeHandle == INVALID_HANDLE_VALUE) {
-    g_pipeHandle = nullptr;
-    LOG("[DSE-DLL] CreateDsePipe failed: %lu\n", GetLastError());
-  } else {
-    LOG("[DSE-DLL] Named pipe created\n");
-  }
-}
-
-void CloseDsePipe() {
-  if (!g_pipeHandle)
-    return;
-
-  CloseHandle(g_pipeHandle);
-  g_pipeHandle = nullptr;
-}
-
-void CreateLockFile() {
+static void EnsureLockPath() {
   if (g_lockPath[0] == L'\0') {
     GetTempPathW(MAX_PATH, g_lockPath);
     PathAppendW(g_lockPath, kLockFileName);
   }
+}
 
+static void EnsureToggledPath() {
+  if (g_toggledPath[0] == L'\0') {
+    GetTempPathW(MAX_PATH, g_toggledPath);
+    PathAppendW(g_toggledPath, kToggledLockFileName);
+  }
+}
+
+void CreateDseOffFromStartLock() {
+  EnsureLockPath();
   HANDLE hFile = CreateFileW(g_lockPath, GENERIC_WRITE, 0, nullptr,
+                             CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (hFile != INVALID_HANDLE_VALUE)
+    CloseHandle(hFile);
+  LOG("[DSE-DLL] Created dse-off-from-start lock: %ls\n", g_lockPath);
+}
+
+void DeleteDseOffFromStartLock() {
+  EnsureLockPath();
+  if (GetFileAttributesW(g_lockPath) != INVALID_FILE_ATTRIBUTES) {
+    DeleteFileW(g_lockPath);
+    LOG("[DSE-DLL] Deleted dse-off-from-start lock\n");
+  }
+}
+
+bool DseWasOffFromStart() {
+  EnsureLockPath();
+  return GetFileAttributesW(g_lockPath) != INVALID_FILE_ATTRIBUTES;
+}
+
+void CreateDseToggledLock() {
+  EnsureToggledPath();
+  HANDLE hFile = CreateFileW(g_toggledPath, GENERIC_WRITE, 0, nullptr,
                              CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
   if (hFile != INVALID_HANDLE_VALUE)
     CloseHandle(hFile);
 }
 
-void DeleteLockFile() {
-  if (g_lockPath[0] != L'\0')
-    DeleteFileW(g_lockPath);
+void DeleteDseToggledLock() {
+  EnsureToggledPath();
+  if (GetFileAttributesW(g_toggledPath) != INVALID_FILE_ATTRIBUTES)
+    DeleteFileW(g_toggledPath);
 }
 
-LPCWSTR GetLockPath() { return g_lockPath; }
+bool DseWasToggled() {
+  EnsureToggledPath();
+  return GetFileAttributesW(g_toggledPath) != INVALID_FILE_ATTRIBUTES;
+}

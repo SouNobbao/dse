@@ -10,7 +10,7 @@
 #include <cstring>
 
 static constexpr LPCWSTR kWatchdogCommandTemplate =
-    L"rundll32.exe \"%s\",DseWatchdog %lu %d %s %s %d";
+    L"rundll32.exe \"%s\",DseWatchdog %lu %s";
 
 extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
                                                            HINSTANCE hinst,
@@ -35,15 +35,8 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
   }
   p = end + 1;
 
-  long safeMode = strtol(p, &end, 10);
-  if (end == p || *end != ' ') {
-    LOG("[WATCHDOG] Bad safeMode\n");
-    return;
-  }
-  p = end + 1;
-
   char *kvcStart = p;
-  while (*p && *p != ' ')
+  while (*p && *p != ' ' && *p != '\r' && *p != '\n')
     p++;
   char kvcA[MAX_PATH] = {0};
   int kvcLen = (int)(p - kvcStart);
@@ -53,35 +46,11 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
   }
   memcpy(kvcA, kvcStart, kvcLen);
 
-  if (*p == ' ')
-    p++;
-
-  char *lockStart = p;
-  while (*p && *p != ' ' && *p != '\r' && *p != '\n')
-    p++;
-  char lockA[MAX_PATH] = {0};
-  int lockLen = (int)(p - lockStart);
-  if (lockLen <= 0 || lockLen >= MAX_PATH) {
-    LOG("[WATCHDOG] Bad lockPath\n");
-    return;
-  }
-  memcpy(lockA, lockStart, lockLen);
-
-  long weDisabled = 0;
-  if (*p == ' ') {
-    p++;
-    weDisabled = strtol(p, &end, 10);
-  }
-
   WCHAR kPath[MAX_PATH] = {0};
-  WCHAR lockPath[MAX_PATH] = {0};
   MultiByteToWideChar(CP_ACP, 0, kvcA, -1, kPath, MAX_PATH);
-  MultiByteToWideChar(CP_ACP, 0, lockA, -1, lockPath, MAX_PATH);
 
-  LOG("[WATCHDOG] PID=%ld safe=%ld weDisabled=%ld\n", pid, safeMode,
-      weDisabled);
+  LOG("[WATCHDOG] PID=%ld\n", pid);
   LOG("[WATCHDOG] kvc: %s\n", kvcA);
-  LOG("[WATCHDOG] lock: %s\n", lockA);
 
   HANDLE hProc = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)pid);
   if (!hProc) {
@@ -94,31 +63,28 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
   CloseHandle(hProc);
   LOG("[WATCHDOG] Game exited!\n");
 
-  if (weDisabled && GetFileAttributesW(lockPath) != INVALID_FILE_ATTRIBUTES) {
-    LOG("[WATCHDOG] Lock file found - restoring DSE...\n");
+  if (DseWasOffFromStart()) {
+    LOG("[WATCHDOG] DSE was off from start, skipping restore.\n");
+  } else {
     lstrcpynW(kvcPath, kPath, MAX_PATH);
-    g_config.dseSafeMode = safeMode ? true : false;
+
     if (IsDseEnabled(false)) {
       LOG("[WATCHDOG] DSE already enabled, skipping.\n");
     } else {
       EnableDse();
       LOG("[WATCHDOG] Restoration complete.\n");
     }
-    DeleteFileW(lockPath);
-  } else if (!weDisabled) {
-    LOG("[WATCHDOG] weDisabled=0, skipping DSE restore.\n");
-  } else {
-    LOG("[WATCHDOG] Lock file gone - clean detach, skipping.\n");
   }
 
+  DeleteDseOffFromStartLock();
+  DeleteDseToggledLock();
   DeleteFileW(kPath);
   LOG("[WATCHDOG] Exiting.\n");
   exit(0);
 }
 
-void SpawnWatchdog(bool weDisabledDse) {
+void SpawnWatchdog() {
   EnsureKvcExtracted();
-  CreateLockFile();
 
   WCHAR dllPath[MAX_PATH]{};
   if (!GetModuleFileNameW(g_hModule, dllPath, MAX_PATH))
@@ -126,8 +92,7 @@ void SpawnWatchdog(bool weDisabledDse) {
 
   WCHAR cmdLine[MAX_PATH * 4]{};
   wsprintfW(cmdLine, kWatchdogCommandTemplate, dllPath, GetCurrentProcessId(),
-            g_config.dseSafeMode ? 1 : 0, kvcPath, GetLockPath(),
-            weDisabledDse ? 1 : 0);
+            kvcPath);
 
   LOG("[DSE-DLL] Spawning watchdog: %ls\n", cmdLine);
 
