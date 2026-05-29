@@ -101,6 +101,18 @@ jobs:
           -static
           -fuse-ld=lld
           -Iminhook/include
+          -ffunction-sections
+          -fdata-sections
+          -flto=thin
+          -Wl,--gc-sections
+          -Wl,--icf=all
+          -fvisibility=hidden
+          -fno-unwind-tables
+          -fno-asynchronous-unwind-tables
+          -fno-exceptions
+          -fno-rtti
+          -Wl,--strip-all
+          -Wl,--build-id=none
         )
 
         SOURCES=(
@@ -117,23 +129,10 @@ jobs:
           -luser32
           -lkernel32
           -ladvapi32
-          -lole32
         )
 
         clang++ "${COMMON_FLAGS[@]}" "${SOURCES[@]}" "${LIBS[@]}" \
           -o build/dse.dll &
-
-        clang++ "${COMMON_FLAGS[@]}" -D_STEAM "${SOURCES[@]}" "${LIBS[@]}" \
-          -o build/dse_steam.dll &
-
-        clang++ "${COMMON_FLAGS[@]}" -D_DEBUG "${SOURCES[@]}" "${LIBS[@]}" \
-          -o build/dse_log.dll &
-
-        clang++ "${COMMON_FLAGS[@]}" -D_STEAM -D_DEBUG "${SOURCES[@]}" "${LIBS[@]}" \
-          -o build/dse_steam_log.dll &
-
-        clang++ "${COMMON_FLAGS[@]}" -D_STEAM -D_DEBUG -D_IMNOTSURE_IFNEEDED "${SOURCES[@]}" "${LIBS[@]}" \
-          -o build/dse_all.dll &
 
         clang++ --target=x86_64-w64-mingw32 -O3 -mwindows -municode \
           -shared -static -fuse-ld=lld \

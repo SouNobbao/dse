@@ -1,5 +1,7 @@
+#include <cstdlib>
 #define WIN32_LEAN_AND_MEAN
 
+#include "config.h"
 #include "kvc_bin.cpp"
 #include "launchers.h"
 #include "log.h"
@@ -19,11 +21,10 @@ HMODULE g_hModule = NULL;
 static const WCHAR *DSE_PIPE_NAME = L"\\\\.\\pipe\\dse_dll";
 static bool g_dse_state = true;
 static bool g_skipDSE = false;
+static bool g_weDisabledDse = false;
 static HANDLE g_pipeHandle = NULL;
 
-#ifdef _STEAM
 #include "steam_hooks.cpp"
-#endif
 
 static bool CheckDsePipe() {
   HANDLE h =
@@ -108,28 +109,6 @@ static bool IsRunningAsAdmin() {
   return isAdmin != FALSE;
 }
 
-#ifdef _IMNOTSURE_IFNEEDED
-static bool EnablePrivilege(LPCWSTR privilegeName) {
-  HANDLE tok{};
-  if (!OpenProcessToken(GetCurrentProcess(),
-                        TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &tok))
-    return false;
-  LUID luid{};
-  if (!LookupPrivilegeValueW(nullptr, privilegeName, &luid)) {
-    CloseHandle(tok);
-    return false;
-  }
-  TOKEN_PRIVILEGES tp{};
-  tp.PrivilegeCount = 1;
-  tp.Privileges[0].Luid = luid;
-  tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-  AdjustTokenPrivileges(tok, FALSE, &tp, 0, nullptr, nullptr);
-  bool ok = (GetLastError() == ERROR_SUCCESS);
-  CloseHandle(tok);
-  return ok;
-}
-#endif
-
 WCHAR kvcPath[MAX_PATH]{};
 
 // Ensure kvc.exe is extracted to temp
@@ -213,7 +192,11 @@ static void RunKvcCommand(LPCWSTR args) {
 
   if (IsRunningAsAdmin()) {
     WCHAR cmdLine[MAX_PATH * 2]{};
-    wsprintfW(cmdLine, L"\"%s\" %s", kvcPath, args);
+    if (g_config.dseSafeMode) {
+      wsprintfW(cmdLine, L"\"%s\" %s --safe", kvcPath, args);
+    } else {
+      wsprintfW(cmdLine, L"\"%s\" %s", kvcPath, args);
+    }
     LOG("[DSE-DLL] Running (admin, direct): %ls\n", cmdLine);
 
     STARTUPINFOW si = {sizeof(si)};
@@ -229,6 +212,152 @@ static void RunKvcCommand(LPCWSTR args) {
     } else {
       LOG("[DSE-DLL] CreateProcessW failed: %lu\n", GetLastError());
     }
+  }
+}
+
+static WCHAR g_lockPath[MAX_PATH] = {0};
+
+static void CreateLockFile() {
+  if (g_lockPath[0] == L'\0') {
+    GetTempPathW(MAX_PATH, g_lockPath);
+    PathAppendW(g_lockPath, L"dse_active.lock");
+  }
+  HANDLE hFile = CreateFileW(g_lockPath, GENERIC_WRITE, 0, nullptr,
+                             CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (hFile != INVALID_HANDLE_VALUE)
+    CloseHandle(hFile);
+}
+
+static void DeleteLockFile() {
+  if (g_lockPath[0] != L'\0')
+    DeleteFileW(g_lockPath);
+}
+
+extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
+                                                           HINSTANCE hinst,
+                                                           LPSTR lpszCmdLine,
+                                                           int nCmdShow) {
+  InitLogPath(g_hModule);
+  LOG("[WATCHDOG] Started with args: %s\n", lpszCmdLine);
+
+  char *p = lpszCmdLine;
+  char *end = nullptr;
+
+  long pid = strtol(p, &end, 10);
+  if (end == p || *end != ' ') {
+    LOG("[WATCHDOG] Bad PID\n");
+    return;
+  }
+  p = end + 1;
+
+  long safeMode = strtol(p, &end, 10);
+  if (end == p || *end != ' ') {
+    LOG("[WATCHDOG] Bad safeMode\n");
+    return;
+  }
+  p = end + 1;
+
+  // Extract kvcPath token
+  char *kvcStart = p;
+  while (*p && *p != ' ')
+    p++;
+  char kvcA[MAX_PATH] = {0};
+  int kvcLen = (int)(p - kvcStart);
+  if (kvcLen <= 0 || kvcLen >= MAX_PATH) {
+    LOG("[WATCHDOG] Bad kvcPath\n");
+    return;
+  }
+  memcpy(kvcA, kvcStart, kvcLen);
+
+  if (*p == ' ')
+    p++;
+
+  // Extract lockPath token
+  char *lockStart = p;
+  while (*p && *p != ' ' && *p != '\r' && *p != '\n')
+    p++;
+  char lockA[MAX_PATH] = {0};
+  int lockLen = (int)(p - lockStart);
+  if (lockLen <= 0 || lockLen >= MAX_PATH) {
+    LOG("[WATCHDOG] Bad lockPath\n");
+    return;
+  }
+  memcpy(lockA, lockStart, lockLen);
+
+  // Parse weDisabled flag
+  long weDisabled = 0;
+  if (*p == ' ') {
+    p++;
+    weDisabled = strtol(p, &end, 10);
+  }
+
+  // Convert to wide
+  WCHAR kPath[MAX_PATH] = {0};
+  WCHAR lockPath[MAX_PATH] = {0};
+  MultiByteToWideChar(CP_ACP, 0, kvcA, -1, kPath, MAX_PATH);
+  MultiByteToWideChar(CP_ACP, 0, lockA, -1, lockPath, MAX_PATH);
+
+  LOG("[WATCHDOG] PID=%ld safe=%ld weDisabled=%ld\n", pid, safeMode,
+      weDisabled);
+  LOG("[WATCHDOG] kvc: %s\n", kvcA);
+  LOG("[WATCHDOG] lock: %s\n", lockA);
+
+  HANDLE hProc = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)pid);
+  if (!hProc) {
+    LOG("[WATCHDOG] OpenProcess failed! err: %lu\n", GetLastError());
+    return;
+  }
+
+  LOG("[WATCHDOG] Waiting for game to exit...\n");
+  WaitForSingleObject(hProc, INFINITE);
+  CloseHandle(hProc);
+  LOG("[WATCHDOG] Game exited!\n");
+
+  if (weDisabled && GetFileAttributesW(lockPath) != INVALID_FILE_ATTRIBUTES) {
+    LOG("[WATCHDOG] Lock file found — restoring DSE...\n");
+    lstrcpynW(kvcPath, kPath, MAX_PATH);
+    g_config.dseSafeMode = safeMode ? true : false;
+    if (IsDseEnabled(false)) {
+      LOG("[WATCHDOG] DSE already enabled, skipping.\n");
+    } else {
+      RunKvcCommand(L"dse on");
+      LOG("[WATCHDOG] Restoration complete.\n");
+    }
+    DeleteFileW(lockPath);
+  } else if (!weDisabled) {
+    LOG("[WATCHDOG] weDisabled=0, skipping DSE restore.\n");
+  } else {
+    LOG("[WATCHDOG] Lock file gone — clean detach, skipping.\n");
+  }
+
+  DeleteFileW(kPath);
+  LOG("[WATCHDOG] Exiting.\n");
+  exit(0);
+}
+
+static void SpawnWatchdog() {
+  EnsureKvcExtracted();
+  CreateLockFile();
+
+  WCHAR dllPath[MAX_PATH]{};
+  if (!GetModuleFileNameW(g_hModule, dllPath, MAX_PATH))
+    return;
+
+  WCHAR cmdLine[MAX_PATH * 4]{};
+  wsprintfW(cmdLine, L"rundll32.exe \"%s\",DseWatchdog %lu %d %s %s %d",
+            dllPath, GetCurrentProcessId(), g_config.dseSafeMode ? 1 : 0,
+            kvcPath, g_lockPath, g_weDisabledDse ? 1 : 0);
+
+  LOG("[DSE-DLL] Spawning watchdog: %ls\n", cmdLine);
+
+  STARTUPINFOW si = {sizeof(si)};
+  PROCESS_INFORMATION pi{};
+  if (CreateProcessW(NULL, cmdLine, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL,
+                     NULL, &si, &pi)) {
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+  } else {
+    LOG("[DSE-DLL] Failed to spawn watchdog, err: %lu\n", GetLastError());
   }
 }
 
@@ -382,11 +511,12 @@ BOOL WINAPI HookedCreateProcessW(
     }
   }
 
-  if (g_dse_state) {
+  if (g_config.toggleDse && g_dse_state) {
     if (!IsDseEnabled(true)) {
       LOG("[DSE-DLL] DSE already disabled, skipping dse off\n");
     } else {
       RunKvcCommand(L"dse off");
+      g_weDisabledDse = true;
     }
     g_dse_state = false;
   }
@@ -431,11 +561,11 @@ HWND WINAPI HookedCreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName,
                                       dwStyle, X, Y, nWidth, nHeight,
                                       hWndParent, hMenu, hInstance, lpParam);
 
-  if (!g_dse_state && hwnd != NULL) {
+  if (g_config.toggleDse && g_weDisabledDse && !g_dse_state && hwnd != NULL) {
     if (IsDseEnabled(false)) {
-      LOG("[DSE-DLL] Window created — DSE already enabled, skipping\n");
+      LOG("[DSE-DLL] Window created > DSE already enabled, skipping\n");
     } else {
-      LOG("[DSE-DLL] Window created — restoring DSE\n");
+      LOG("[DSE-DLL] Window created > restoring DSE\n");
       RunKvcCommand(L"dse on");
     }
     g_dse_state = true;
@@ -471,14 +601,26 @@ void InitializeHooks() {
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
                       LPVOID lpReserved) {
-  switch (ul_reason_for_call) {
-  case DLL_PROCESS_ATTACH:
+
+  if (ul_reason_for_call == DLL_PROCESS_ATTACH) {
     DisableThreadLibraryCalls(hModule);
     g_hModule = hModule;
-#ifdef _DEBUG
+
+    // Skip all init when loaded by rundll32 (watchdog mode)
+    WCHAR hostExe[MAX_PATH]{};
+    GetModuleFileNameW(NULL, hostExe, MAX_PATH);
+    if (StrStrIW(PathFindFileNameW(hostExe), L"rundll32") != nullptr)
+      return TRUE;
+
+    LoadDseConfig(hModule);
+    g_loggingEnabled = g_config.logging;
+
     SetupLogConsole(g_hModule);
-#endif
     LOG("[DSE-DLL] Attached to PID %lu\n", GetCurrentProcessId());
+    LOG("[DSE-DLL] Config: toggleDse=%d dseSafeMode=%d steamHooks=%d "
+        "logging=%d\n",
+        g_config.toggleDse, g_config.dseSafeMode, g_config.steamHooks,
+        g_config.logging);
 
     if (CheckDsePipe()) {
       g_skipDSE = true;
@@ -487,13 +629,6 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
     }
 
     DetectLauncherTarget();
-
-#ifdef _IMNOTSURE_IFNEEDED
-    EnablePrivilege(L"SeDebugPrivilege");
-    EnablePrivilege(L"SeImpersonatePrivilege");
-    EnablePrivilege(L"SeAssignPrimaryTokenPrivilege");
-    EnablePrivilege(L"SeShutdownPrivilege");
-#endif
 
     if (!IsRunningAsAdmin()) {
       LOG("[DSE-DLL] Not admin elevating ...\n");
@@ -562,55 +697,70 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
         CloseHandle(pi.hProcess);
         LOG("[DSE-DLL] Terminating non-admin instance.\n");
       }
-      // this never reuns tbf
-      /*  else {
-        LOG("[DSE-DLL] CreateProcessW for mshta failed: %lu\n",
-                GetLastError());
-        MessageBoxW(NULL,
-                    L"Administrator privileges are required.\n"
-                    L"Please run the game as Administrator.",
-                    L"DSE-DLL", MB_OK | MB_ICONERROR);
-      } */
+
       DeleteFileW(vbsPath);
       ExitProcess(0);
     } else {
-      if (!g_skipDSE) {
+      if (!g_skipDSE && g_config.toggleDse) {
         if (!IsDseEnabled(true)) {
-          LOG("[DSE-DLL] Running as ADMIN — DSE already disabled, skipping\n");
+          LOG("[DSE-DLL] Running as ADMIN > DSE already disabled, skipping\n");
         } else {
           LOG("[DSE-DLL] Running as ADMIN disabling DSE...\n");
           RunKvcCommand(L"dse off");
+          g_weDisabledDse = true;
         }
         g_dse_state = false;
         CreateDsePipe();
-      } else {
+      } else if (g_skipDSE) {
         LOG("[DSE-DLL] Skipping DSE disable (pipe detected)\n");
+      } else {
+        LOG("[DSE-DLL] DSE toggling disabled by config\n");
       }
     }
 
     InitializeHooks();
-#ifdef _STEAM
-    InitSteamHooks();
-#endif
-    break;
+    if (g_config.steamHooks) {
+      InitSteamHooks();
+    } else {
+      LOG("[DSE-DLL] Steam hooks disabled by config\n");
+    }
 
-  case DLL_PROCESS_DETACH:
-    if (!g_dse_state) {
+    if (g_targetExe[0]) {
+      LOG("[DSE-DLL] Launcher detected, skipping watchdog\n");
+    } else {
+      SpawnWatchdog();
+    }
+  }
+
+  if (ul_reason_for_call == DLL_PROCESS_DETACH) {
+    WCHAR hostExe[MAX_PATH]{};
+    GetModuleFileNameW(NULL, hostExe, MAX_PATH);
+    if (StrStrIW(PathFindFileNameW(hostExe), L"rundll32") != nullptr)
+      return TRUE;
+
+    LOG("[DSE-DLL] Detaching...\n");
+    if (g_config.toggleDse && g_weDisabledDse && !g_dse_state) {
       if (IsDseEnabled(false)) {
-        LOG("[DSE-DLL] Detaching — DSE already enabled, skipping\n");
+        LOG("[DSE-DLL] Detaching > DSE already enabled, skipping\n");
       } else {
         LOG("[DSE-DLL] Detaching... restoring DSE...\n");
         RunKvcCommand(L"dse on");
       }
       g_dse_state = true;
     }
+    if (g_weDisabledDse)
+      DeleteLockFile();
+    LOG("[DSE-DLL] Uninitializing MinHook...\n");
     MH_Uninitialize();
+    LOG("[DSE-DLL] Deleting kvc...\n");
     DeleteFileW(kvcPath);
+    LOG("[DSE-DLL] Closing pipe...\n");
     if (g_pipeHandle) {
       CloseHandle(g_pipeHandle);
       g_pipeHandle = NULL;
     }
-    break;
+    LOG("[DSE-DLL] Detached!\n");
   }
+
   return TRUE;
 }

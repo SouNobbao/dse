@@ -7,6 +7,7 @@ How to use
 
 ## steam version (overlay + input)
 
+0. Enable in config file.
 1. Add to load dll section 
 2. Remove coldclient/loader.dll
 3. Use [OpenSteamTool](https://github.com/OpenSteam001/OpenSteamTool) 
@@ -30,11 +31,7 @@ How to use
 
 | dll | what it does |
 | --- | --- |
-| `dse.dll` | base DSE toggle/inject helper, no Steam hooks, no console/log file |
-| `dse_steam.dll` | base build + Steam hooks |
-| `dse_log.dll` | base build + console + `dse-dll.log` |
-| `dse_steam_log.dll` | Steam hooks + console/logging |
-| `dse_all.dll` | everything above + extra paranoid stuff |
+| `dse.dll` | toggle dse modes via kvc (check dse.ini for config) |
 | `dse_loader.dll` | loader stub for other exes |
 
 # what this code does

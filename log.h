@@ -3,13 +3,13 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-#ifdef _DEBUG
-
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <shlwapi.h>
 #include <stdio.h>
+
+static bool g_loggingEnabled = true;
 
 static WCHAR g_logPath[MAX_PATH] = {0};
 
@@ -60,6 +60,8 @@ static void Log(const char *fmt, ...) {
 }
 
 static void SetupLogConsole(HMODULE hModule) {
+  if (!g_loggingEnabled)
+    return;
   InitLogPath(hModule);
   AllocConsole();
   FILE *dummy;
@@ -69,11 +71,8 @@ static void SetupLogConsole(HMODULE hModule) {
   Log("[DSE-DLL] Console initialized.\n");
 }
 
-#define LOG(fmt, ...) Log(fmt, ##__VA_ARGS__)
-
-#else
-
-static void SetupLogConsole(HMODULE) {}
-#define LOG(fmt, ...) ((void)0)
-
-#endif
+#define LOG(fmt, ...)                                                          \
+  do {                                                                         \
+    if (g_loggingEnabled)                                                      \
+      Log(fmt, ##__VA_ARGS__);                                                 \
+  } while (0)
