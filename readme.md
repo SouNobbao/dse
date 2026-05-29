@@ -1,4 +1,4 @@
-# DSE runtime
+# dse
 
 ## How to use
 
@@ -40,6 +40,6 @@ The DLL extracts `kvc` and a temporary VBS elevation helper, then starts the ser
 
 ## TODO
 
-- [ ] Relaunch MSI Afterburner.
-- [ ] Handle conflicting services such as VGC/VGK.
-- [x] Verify `kvc` launch handling.
+- [ ] fix afterburner.
+- [ ] handle conflict between vgk/vgc.
+- [x] handle `kvc` correctly. (i hope)
