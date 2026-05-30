@@ -66,6 +66,7 @@ jobs:
           log.cpp
           watchdog.cpp
           afterburner.cpp
+          hide_module.cpp
           minhook/src/buffer.c
           minhook/src/hook.c
           minhook/src/trampoline.c
