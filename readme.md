@@ -40,6 +40,7 @@ The DLL extracts `drvloader or kvc` and a temporary VBS elevation helper, then s
 
 ## TODO
 
-- [ ] fix afterburner.
-- [ ] handle conflict between vgk/vgc.
+- [x] fix afterburner.
+- [ ] handle conflict between services
+- [ ] check if vbs/hvci is off 
 - [x] handle `kvc/drvloader` correctly.
