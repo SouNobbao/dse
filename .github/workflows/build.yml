@@ -80,19 +80,6 @@ jobs:
           -ladvapi32
         )
 
-        clang++ "${COMMON_FLAGS[@]}" -D_STABLE "${SOURCES[@]}" "${LIBS[@]}" \
-          -o build/dse.dll &
-
-        clang++ "${COMMON_FLAGS[@]}" "${SOURCES[@]}" "${LIBS[@]}" \
-          -o build/dse_kvc.dll &
-
-        wait
-
-    - name: Build PEFile
-      run: |
-        set -euo pipefail
-        mkdir -p build
-
         PEFILE_FLAGS=(
           --target=x86_64-w64-mingw32
           -Oz
@@ -116,12 +103,16 @@ jobs:
           -Wl,--build-id=none
         )
 
-        cd pefile
+        clang++ "${COMMON_FLAGS[@]}" -D_STABLE "${SOURCES[@]}" "${LIBS[@]}" \
+          -o build/dse.dll &
 
-        clang++ "${PEFILE_FLAGS[@]}" -o ../build/pefile.exe pefile.cpp main.cpp
+        clang++ "${COMMON_FLAGS[@]}" "${SOURCES[@]}" "${LIBS[@]}" \
+          -o build/dse_kvc.dll &
 
-        cd ..
+        clang++ "${PEFILE_FLAGS[@]}" -o build/pefile.exe pefile/pefile.cpp pefile/main.cpp
 
+        wait
+        
     - name: Compress DLLs with UPX
       run: |
         set -euo pipefail
