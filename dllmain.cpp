@@ -3,16 +3,15 @@
 
 #include "common.h"
 #include "config.h"
+#include "drvloader.h"
 #include "events.h"
 #include "injector.h"
-#include "kvc.h"
 #include "launchers.h"
 #include "log.h"
 #include "minhook/include/MinHook.h"
 #include "watchdog.h"
 
 #include <cstring>
-#include <mutex>
 #include <shellapi.h>
 #include <shlwapi.h>
 #include <windows.h>
@@ -158,7 +157,7 @@ BOOL WINAPI HookedCreateProcessW(
 			return passthrough();
 
 		LPCWSTR exeName = PathFindFileNameW(exePath);
-		if (StrStrIW(exeName, L"kvc.exe") || StrStrIW(exeName, L"crash") ||
+		if (StrStrIW(exeName, L"drvloader") || StrStrIW(exeName, L"crash") ||
 			StrStrIW(exeName, L"watchdog") || StrStrIW(exeName, L"rundll32"))
 			return passthrough();
 	}
@@ -334,8 +333,8 @@ static void OnProcessDetach() {
 	DeleteDseToggledLock();
 	LOG("[DSE-DLL] Uninitializing MinHook...\n");
 	MH_Uninitialize();
-	LOG("[DSE-DLL] Deleting kvc...\n");
-	DeleteKvcFile();
+	LOG("[DSE-DLL] Deleting drvloader...\n");
+	DeleteDrvFile();
 	LOG("[DSE-DLL] Detached!\n");
 }
 

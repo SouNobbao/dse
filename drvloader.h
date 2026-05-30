@@ -10,12 +10,12 @@ typedef BOOL(WINAPI *pCreateProcessW_t)(LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES,
 										LPPROCESS_INFORMATION);
 
 extern pCreateProcessW_t OriginalCreateProcessW;
-extern WCHAR kvcPath[MAX_PATH];
+extern WCHAR drvPath[MAX_PATH];
 
 bool IsRunningAsAdmin();
-void EnsureKvcExtracted();
+void EnsureDrvExtracted();
 bool IsDseEnabled(bool defaultVal = true);
-void RunKvcCommand(LPCWSTR args);
+void RunDrvCommand(LPCWSTR args);
 void DisableDse();
 void EnableDse();
-void DeleteKvcFile();
+void DeleteDrvFile();

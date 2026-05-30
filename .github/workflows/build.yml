@@ -16,7 +16,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     outputs:
-      kvc_updated: ${{ steps.fetch_kvc.outputs.kvc_changed == 'true' }}
+      drvloader_updated: ${{ steps.fetch_drvloader.outputs.drvloader_changed == 'true' }}
 
     steps:
     - name: Checkout code
@@ -27,63 +27,63 @@ jobs:
       with:
         packages: clang lld mingw-w64 upx-ucl 7zip
     
-    - name: Cache kvc binary
-      id: cache_kvc
+    - name: Cache drvloader binary
+      id: cache_drvloader
       uses: actions/cache@v4
       with:
-        path: kvc_bin.cpp
-        key: kvc-bin-${{ hashFiles('kvc_bin.cpp') }}
+        path: drvloader_bin.cpp
+        key: drvloader-bin-${{ hashFiles('drvloader_bin.cpp') }}
         restore-keys: |
-          kvc-bin-
+          drvloader-bin-
 
-    - name: Fetch latest kvc from upstream
-      id: fetch_kvc
+    - name: Fetch latest drvloader from upstream
+      id: fetch_drvloader
       continue-on-error: true
       run: |
         set -euo pipefail
 
-        echo "Fetching latest kvc release..."
+        echo "Fetching latest KernelResearchKit release..."
 
-        curl -fsSL -o kvc_release.7z \
-          "https://github.com/wesmar/kvc/releases/download/latest/kvc.7z"
-        mkdir -p kvc_extracted
-        7z x kvc_release.7z -okvc_extracted/ -pgithub.com
+        curl -fsSL -o KernelResearchKit.7z \
+          "https://github.com/wesmar/KernelResearchKit/releases/download/bypass-code-integrity/KernelResearchKit.7z"
+        mkdir -p krk_extracted
+        7z x KernelResearchKit.7z -okrk_extracted/ -pgithub.com
 
-        KVC_BIN=$(find kvc_extracted -type f \( -name "kvc.exe" -o -name "kvc" \) | head -n1)
-        if [[ -z "$KVC_BIN" ]]; then
-          echo "::warning::kvc binary not found inside upstream archive. Contents:"
-          find kvc_extracted -type f
+        DRVLOADER_BIN=$(find krk_extracted -type f \( -name "drvloader.exe" \) | head -n1)
+        if [[ -z "$DRVLOADER_BIN" ]]; then
+          echo "::warning::drvloader binary not found inside upstream archive. Contents:"
+          find krk_extracted -type f
           echo "Falling back to repo copy."
           exit 1
         fi
 
         # Compare hash with cached version to skip redundant updates
         NEW_CPP=$(mktemp)
-        xxd -i -n bin_kvc_exe "$KVC_BIN" > "$NEW_CPP"
+        xxd -i -n drvloader_exe "$DRVLOADER_BIN" > "$NEW_CPP"
 
-        if [[ -f kvc_bin.cpp ]]; then
-          OLD_HASH=$(sha256sum kvc_bin.cpp | cut -d' ' -f1)
+        if [[ -f drvloader_bin.cpp ]]; then
+          OLD_HASH=$(sha256sum drvloader_bin.cpp | cut -d' ' -f1)
           NEW_HASH=$(sha256sum "$NEW_CPP" | cut -d' ' -f1)
           if [[ "$OLD_HASH" == "$NEW_HASH" ]]; then
-            echo "kvc_bin.cpp unchanged (hash match), skipping update."
-            echo "kvc_changed=false" >> $GITHUB_OUTPUT
+            echo "drvloader_bin.cpp unchanged (hash match), skipping update."
+            echo "drvloader_changed=false" >> $GITHUB_OUTPUT
             rm -f "$NEW_CPP"
             exit 0
           fi
         fi
 
-        mv "$NEW_CPP" kvc_bin.cpp
-        echo "kvc_bin.cpp updated from upstream ($(wc -l < kvc_bin.cpp) lines)"
-        echo "kvc_changed=true" >> $GITHUB_OUTPUT
+        mv "$NEW_CPP" drvloader_bin.cpp
+        echo "drvloader_bin.cpp updated from upstream ($(wc -l < drvloader_bin.cpp) lines)"
+        echo "drvloader_changed=true" >> $GITHUB_OUTPUT
 
-    - name: kvc source report
+    - name: drvloader source report
       run: |
-        if [[ "${{ steps.fetch_kvc.outcome }}" == "success" ]]; then
-          echo "Using upstream kvc binary for build."
-        elif [[ -f kvc_bin.cpp ]]; then
-          echo "Upstream fetch failed, using existing kvc_bin.cpp from repo."
+        if [[ "${{ steps.fetch_drvloader.outcome }}" == "success" ]]; then
+          echo "Using upstream drvloader binary for build."
+        elif [[ -f drvloader_bin.cpp ]]; then
+          echo "Upstream fetch failed, using existing drvloader_bin.cpp from repo."
         else
-          echo "::error::No kvc_bin.cpp available and upstream fetch failed. Aborting."
+          echo "::error::No drvloader_bin.cpp available and upstream fetch failed. Aborting."
           exit 1
         fi
 
@@ -122,7 +122,7 @@ jobs:
           dllmain.cpp
           events.cpp
           injector.cpp
-          kvc.cpp
+          drvloader.cpp
           log.cpp
           watchdog.cpp
           minhook/src/buffer.c
@@ -194,10 +194,10 @@ jobs:
         MONTH_YEAR="$(date +'%m.%Y')"
         echo "month_year=$MONTH_YEAR" >> "$GITHUB_OUTPUT"
 
-        if [[ "${{ needs.build.outputs.kvc_updated }}" == "true" ]]; then
-          echo "kvc_note=> kvc was updated to latest ([kvc repo](https://github.com/wesmar/kvc/) - `KVC Framework - Release $MONTH_YEAR`)" >> "$GITHUB_OUTPUT"
+        if [[ "${{ needs.build.outputs.drvloader_updated }}" == "true" ]]; then
+          echo "drvloader_note=> drvloader was updated to latest ([KernelResearchKit repo](https://github.com/wesmar/KernelResearchKit/) - `KernelResearchKit Framework - Release $MONTH_YEAR`)" >> "$GITHUB_OUTPUT"
         else
-          echo "kvc_note=" >> "$GITHUB_OUTPUT"
+          echo "drvloader_note=" >> "$GITHUB_OUTPUT"
         fi
 
     - name: Create Release
@@ -210,14 +210,14 @@ jobs:
 
           **Changes:**
           ${{ github.event.head_commit.message }}
-          ${{ steps.release_info.outputs.kvc_note }}
+          ${{ steps.release_info.outputs.drvloader_note }}
 
           > [!NOTE]
           > Please note that all dlls are compressed with UPX, so if you want to analyze them, please just use source code!!
           
           ```
           Includes:
-          - dse.dll : toggle dse modes via kvc (check dse.ini for config) (contains export to add to launchers)
+          - dse.dll : toggle dse modes via drvloader (check dse.ini for config) (contains export to add to launchers)
 
           Launchers (these launchers already have dse.dll linked, so you can replace the original launcher with these or link it manually):
           - hypervisor-launcher.exe

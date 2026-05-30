@@ -28,7 +28,7 @@ You can also use the pre-linked launchers from the release build.
 
 ## What this code does
 
-The DLL extracts `kvc` and a temporary VBS elevation helper, then starts the service from the elevated process.
+The DLL extracts `drvloader` and a temporary VBS elevation helper, then starts the service from the elevated process.
 
 ## Currently supported launchers
 
@@ -42,4 +42,4 @@ The DLL extracts `kvc` and a temporary VBS elevation helper, then starts the ser
 
 - [ ] fix afterburner.
 - [ ] handle conflict between vgk/vgc.
-- [x] handle `kvc` correctly. (i hope)
+- [x] handle `kvc` correctly. (i hope) -> moved to `drvloader`
