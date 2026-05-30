@@ -76,9 +76,6 @@ jobs:
 
         LIBS=(
           -lshlwapi
-          -luser32
-          -lkernel32
-          -ladvapi32
         )
 
         PEFILE_FLAGS=(

@@ -14,7 +14,7 @@
 5. Put Lua files in `steam/config/lua` and manifests in `steamdepot/cache`.
 6. Click Play.
 
-## Linking the DLL for supported launchers
+## Linking the DLL for launchers or without loaders
 
 ### CFF Explorer (GUI)
 1. Open your exe in [CFF Explorer](https://ntcore.com/explorer-suite/)
