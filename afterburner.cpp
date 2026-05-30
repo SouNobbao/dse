@@ -1,3 +1,5 @@
+#include "config.h"
+#include "events.h"
 #include "log.h"
 #define WIN32_LEAN_AND_MEAN
 
@@ -11,7 +13,6 @@
 static WCHAR g_AfterburnerLoc[MAX_PATH] = {0};
 static HANDLE g_AfterburnerProcess = NULL;
 static DWORD g_AfterburnerPID = 0;
-static bool g_IsAfterburnerRunning = false;
 
 void GetAfterburnerLocation() {
 	if (g_AfterburnerLoc[0]) {
@@ -69,8 +70,12 @@ bool IsAfterburnerRunning() {
 	return FALSE;
 }
 
-bool WasAfterburnerRunning() { return g_IsAfterburnerRunning; }
-void SetAfterburnerRunningState(bool state) { g_IsAfterburnerRunning = state; }
+bool WasAfterburnerRunning() { return WasAfterburnerEventSet(); }
+void SetAfterburnerRunningState(bool state) {
+	if (state) {
+		SetAfterburnerEvent();
+	}
+}
 
 static void KillProcessTree(DWORD pid) {
 	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -104,6 +109,9 @@ static void KillProcessTree(DWORD pid) {
 }
 
 void KillAfterBurner() {
+	if (!g_config.toggleDse)
+		return;
+
 	if (IsAfterburnerRunning()) {
 		if (g_AfterburnerProcess) {
 			CloseHandle(g_AfterburnerProcess);
@@ -120,7 +128,10 @@ void KillAfterBurner() {
 }
 
 void StartAfterburner() {
-	if (!g_IsAfterburnerRunning) {
+	if (!g_config.toggleDse)
+		return;
+
+	if (!WasAfterburnerEventSet()) {
 		LOG("[DSE-DLL] Skipping Afterburner start because it was not running before.\n");
 		return;
 	}
@@ -145,7 +156,6 @@ void StartAfterburner() {
 			LOG("[DSE-DLL] Afterburner started\n");
 			CloseHandle(pi.hThread);
 			CloseHandle(pi.hProcess);
-			g_IsAfterburnerRunning = FALSE;
 		}
 	} else {
 		LOG("[DSE-DLL] Afterburner not found\n");

@@ -1,5 +1,6 @@
 #include "watchdog.h"
 
+#include "checks.h"
 #include "common.h"
 #include "config.h"
 #include "events.h"
@@ -66,6 +67,15 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
 	LOG("[WATCHDOG] PID=%ld, wasOffFromStart=%ld, wasToggled=%ld\n", pid, wasOffFromStart, wasToggled);
 	LOG("[WATCHDOG] drvloader: %s\n", drvA);
 
+	// Grab handles to global events so they stay alive even if the game crashes
+	if (wasToggled) {
+		CheckAndSetDseToggled();
+	}
+	if (wasOffFromStart) {
+		CheckAndSetDseOffFromStart();
+	}
+	CheckAndSetAfterburnerEvent();
+
 	HANDLE hProc = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)pid);
 	if (!hProc) {
 		LOG("[WATCHDOG] OpenProcess failed! err: %lu\n", GetLastError());
@@ -80,6 +90,8 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
 	if (wasOffFromStart) {
 		LOG("[WATCHDOG] DSE was off from start, skipping restore.\n");
 	} else {
+		CloseGameEvents();
+
 		if (IsOtherGameRunning()) {
 			LOG("[WATCHDOG] Another game is still running, skipping restore.\n");
 		} else {
@@ -91,9 +103,14 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
 				EnableDse();
 				LOG("[WATCHDOG] Restoration complete.\n");
 			}
+
+			if (g_config.toggleDse) {
+				RestoreProblematicServices();
+			}
 		}
 	}
 
+	CloseDseEvents();
 	DeleteFileW(drvPath);
 	LOG("[WATCHDOG] Exiting.\n");
 	exit(0);

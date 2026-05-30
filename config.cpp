@@ -7,7 +7,7 @@
 
 #pragma comment(lib, "shlwapi.lib")
 
-DseConfig g_config = {true, false, false};
+DseConfig g_config = {true, false, false, {}, {}};
 
 static bool ReadIniBool(LPCWSTR section, LPCWSTR key, bool defaultVal,
 						LPCWSTR iniPath) {
@@ -21,6 +21,28 @@ static bool ReadIniBool(LPCWSTR section, LPCWSTR key, bool defaultVal,
 		_wcsicmp(buf, L"no") == 0)
 		return false;
 	return defaultVal;
+}
+
+static void ReadIniStringList(LPCWSTR section, LPCWSTR key, LPCWSTR iniPath, std::vector<std::wstring> &outList) {
+	WCHAR buf[1024]{};
+	GetPrivateProfileStringW(section, key, L"", buf, ARRAYSIZE(buf), iniPath);
+
+	std::wstring s(buf);
+	size_t pos = 0;
+	while ((pos = s.find(L',')) != std::wstring::npos) {
+		std::wstring token = s.substr(0, pos);
+		token.erase(0, token.find_first_not_of(L" \t\r\n"));
+		token.erase(token.find_last_not_of(L" \t\r\n") + 1);
+		if (!token.empty())
+			outList.push_back(token);
+		s.erase(0, pos + 1);
+	}
+	s.erase(0, s.find_first_not_of(L" \t\r\n"));
+	size_t last = s.find_last_not_of(L" \t\r\n");
+	if (last != std::wstring::npos)
+		s.erase(last + 1);
+	if (!s.empty())
+		outList.push_back(s);
 }
 
 static void GetDseIniPath(HMODULE hModule, WCHAR *outPath, DWORD maxLen) {
@@ -44,7 +66,11 @@ void LoadDseConfig(HMODULE hModule) {
 						   L"disabled, patcher will not run.\ntoggleDse=true\n"
 						   L"; Enable/disable Steam "
 						   L"API hooks\nsteamHooks=false\n; Enable/disable logging "
-						   L"output\nlogging=false");
+						   L"output\nlogging=false\n\n"
+						   L"; Problematic services to stop or delete (Format: ServiceName:ACTION)\n"
+						   L"problematic_services=\n\n"
+						   L"; Problematic tasks to kill (comma separated executable names)\n"
+						   L"problematic_tasks=\n");
 
 			fclose(file);
 		}
@@ -52,7 +78,34 @@ void LoadDseConfig(HMODULE hModule) {
 	}
 
 	g_config.toggleDse = ReadIniBool(L"dse", L"toggleDse", true, iniPath);
-
 	g_config.steamHooks = ReadIniBool(L"dse", L"steamHooks", false, iniPath);
 	g_config.logging = ReadIniBool(L"dse", L"logging", false, iniPath);
+
+	std::vector<std::wstring> rawServices;
+	ReadIniStringList(L"dse", L"problematic_services", iniPath, rawServices);
+	for (const auto &svc : rawServices) {
+		size_t colon = svc.find(L':');
+		if (colon != std::wstring::npos) {
+			std::wstring name = svc.substr(0, colon);
+			std::wstring actionStr = svc.substr(colon + 1);
+
+			name.erase(0, name.find_first_not_of(L" \t\r\n"));
+			size_t nameLast = name.find_last_not_of(L" \t\r\n");
+			if (nameLast != std::wstring::npos)
+				name.erase(nameLast + 1);
+
+			actionStr.erase(0, actionStr.find_first_not_of(L" \t\r\n"));
+			size_t actionLast = actionStr.find_last_not_of(L" \t\r\n");
+			if (actionLast != std::wstring::npos)
+				actionStr.erase(actionLast + 1);
+
+			ServiceActionType action = ServiceActionType::STOP;
+			if (_wcsicmp(actionStr.c_str(), L"DELETE") == 0) {
+				action = ServiceActionType::DELETE_SVC;
+			}
+			g_config.problematicServices.push_back({name, action});
+		}
+	}
+
+	ReadIniStringList(L"dse", L"problematic_tasks", iniPath, g_config.problematicTasks);
 }

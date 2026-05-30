@@ -10,5 +10,10 @@ bool CheckAndSetDseToggled();
 void SetDseToggled();
 
 void CloseDseEvents();
+void CloseGameEvents();
 bool IsOtherGameRunning();
+
+bool CheckAndSetAfterburnerEvent();
+void SetAfterburnerEvent();
+bool WasAfterburnerEventSet();
 

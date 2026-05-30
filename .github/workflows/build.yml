@@ -39,6 +39,7 @@ jobs:
           -static
           -x
           c++
+          -Wno-deprecated
           -fuse-ld=lld
           -Iminhook/include
           -ffunction-sections
@@ -57,6 +58,7 @@ jobs:
 
         SOURCES=(
           config.cpp
+          checks.cpp
           dllmain.cpp
           events.cpp
           injector.cpp
@@ -115,7 +117,7 @@ jobs:
     - name: Compress DLLs with UPX
       run: |
         set -euo pipefail
-        upx --best --lzma build/*.dll
+        upx --best --lzma build/*
 
     - name: Copy extras to build
       run: cp -v extras/* build/
@@ -173,7 +175,7 @@ jobs:
           ${{ steps.release_info.outputs.drvloader_note }}
 
           > [!NOTE]
-          > Please note that all dlls are compressed with UPX, so if you want to analyze them, please just use source code!!
+          > Please note that all dlls (and pefile) are compressed with UPX, so if you want to analyze them, please just use source code!!
           
           > [!NOTE]
           > Windows 10 users should use KVC as drvloader does not run correctly in Windows 10
@@ -187,6 +189,9 @@ jobs:
           Launchers (these launchers already have dse.dll linked, so you can replace the original launcher with these or link it manually):
           - hypervisor-launcher.exe
           - steamclient_loader_x64.exe
+
+          PEFile :
+          - pefile.exe : i cant really find a good description to put here, so thingy to link dlls, usage: `pefile.exe [target] [dll to load] [function to call separated by commas]`
           ```
 
           **SHA-256 Hashes:**
@@ -202,6 +207,7 @@ jobs:
           ./release/hypervisor-launcher.exe
           ./release/steamclient_loader_x64.exe
           ./release/build.7z
+          ./release/pefile.exe
           ./release/sha256hashes.txt
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

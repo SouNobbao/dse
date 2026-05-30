@@ -50,6 +50,6 @@ The DLL extracts `drvloader or kvc` and a temporary VBS elevation helper, then s
 ## TODO
 
 - [x] fix afterburner.
-- [ ] handle conflict between services
-- [ ] check if vbs/hvci is off 
+- [x] handle conflict between services (check dse.ini on this repo, for examples on how to setup) <- not been tested fully.
+- [x] check if vbs/hvci is off (simple regedit check)
 - [x] handle `kvc/drvloader` correctly.

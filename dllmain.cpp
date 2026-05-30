@@ -1,6 +1,7 @@
 #include <cstdlib>
 #define WIN32_LEAN_AND_MEAN
 
+#include "afterburner.h"
 #include "common.h"
 #include "config.h"
 #include "events.h"
@@ -10,7 +11,6 @@
 #include "minhook/include/MinHook.h"
 #include "patcher.h"
 #include "watchdog.h"
-#include "afterburner.h"
 
 #include <cstring>
 #include <shellapi.h>
@@ -34,6 +34,8 @@ static bool IsRundll32Host() {
 	GetModuleFileNameW(nullptr, hostExe, MAX_PATH);
 	return StrStrIW(PathFindFileNameW(hostExe), L"rundll32") != nullptr;
 }
+
+#include "checks.h"
 
 static constexpr LPCWSTR kWscriptCommandTemplate =
 	L"wscript.exe //nologo \"%s\"";
@@ -179,7 +181,7 @@ BOOL WINAPI HookedCreateProcessW(
 	}
 
 	if (g_config.toggleDse && !g_wasOffFromStart) {
-		if (IsDseEnabled(false)) {
+		if (IsDseEnabledNtdll()) {
 			LOG("[DSE-DLL] CreateProcessW > disabling DSE\n");
 			DisableDse();
 		} else {
@@ -280,7 +282,14 @@ static void OnProcessAttach(HMODULE hModule) {
 		g_config.toggleDse, g_config.steamHooks,
 		g_config.logging);
 
-	if (IsAfterburnerRunning()) {
+	if (g_config.toggleDse) {
+		ManageProblematicServices();
+		ManageProblematicTasks();
+	}
+
+	CheckAndSetAfterburnerEvent();
+
+	if (g_config.toggleDse && IsAfterburnerRunning()) {
 		SetAfterburnerRunningState(true);
 	}
 
@@ -289,8 +298,10 @@ static void OnProcessAttach(HMODULE hModule) {
 	if (!IsRunningAsAdmin()) {
 		RelaunchElevatedAndExit();
 	} else {
+		SystemChecks();
+
 		if (g_config.toggleDse) {
-			if (!IsDseEnabled(true)) {
+			if (!IsDseEnabledNtdll()) {
 				if (CheckAndSetDseToggled()) {
 					LOG("[DSE-DLL] DSE off (parent disabled it), proceeding normally\n");
 					g_wasToggled = true;
@@ -330,18 +341,24 @@ static void OnProcessDetach() {
 
 	LOG("[DSE-DLL] Detaching...\n");
 	CloseDseEvents();
-	
+
+	bool otherGameRunning = IsOtherGameRunning();
+
 	if (g_config.toggleDse && !g_wasOffFromStart) {
-		if (IsDseEnabled(false)) {
+		if (IsDseEnabledNtdll()) {
 			LOG("[DSE-DLL] Detaching > DSE already enabled, skipping\n");
 		} else {
-			if (IsOtherGameRunning()) {
+			if (otherGameRunning) {
 				LOG("[DSE-DLL] Detaching > another game is running, skipping restore\n");
 			} else {
 				LOG("[DSE-DLL] Detaching... restoring DSE...\n");
 				EnableDse();
 			}
 		}
+	}
+
+	if (g_config.toggleDse && !otherGameRunning) {
+		RestoreProblematicServices();
 	}
 	LOG("[DSE-DLL] Uninitializing MinHook...\n");
 	MH_Uninitialize();
