@@ -62,7 +62,7 @@ jobs:
           dllmain.cpp
           events.cpp
           injector.cpp
-          drvloader.cpp
+          patcher.cpp
           log.cpp
           watchdog.cpp
           afterburner.cpp
