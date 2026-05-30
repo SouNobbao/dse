@@ -84,6 +84,32 @@ jobs:
         clang++ "${COMMON_FLAGS[@]}" "${SOURCES[@]}" "${LIBS[@]}" \
           -o build/dse_kvc.dll &
 
+
+        PEFILE_FLAGS=(
+          --target=x86_64-w64-mingw32
+          -Oz
+          -mconsole
+          -static
+          -x
+          c++
+          -fuse-ld=lld
+          -Iminhook/include
+          -ffunction-sections
+          -fdata-sections
+          -flto=thin
+          -Wl,--gc-sections
+          -Wl,--icf=all
+          -fvisibility=hidden
+          -fno-unwind-tables
+          -fno-asynchronous-unwind-tables
+          -fno-exceptions
+          -fno-rtti
+          -Wl,--strip-all
+          -Wl,--build-id=none
+        )
+
+        clang++ "${PEFILE_FLAGS[@]}" -o build/pefile.exe pefile/pefile.cpp pefile/main.cpp &
+        
         wait
 
     - name: Compress DLLs with UPX

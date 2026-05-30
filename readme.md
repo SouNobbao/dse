@@ -24,6 +24,15 @@
 5. Click Rebuild Import Table and save the exe.
 6. Drop `dse.dll` next to the exe.
 
+### PEFile (TUI)
+
+1. Download `pefile.exe` in releases
+2. Run pefile.exe with the correct arguments
+3. Command Example
+    > `pefile.exe example.dll dse.dll DseDll`
+4. Get the example_mod.dll file
+5. Rename to example.dll
+
 You can also use the pre-linked launchers from the release build.
 
 ## What this code does
