@@ -11,6 +11,7 @@
 #include "minhook/include/MinHook.h"
 #include "patcher.h"
 #include "watchdog.h"
+#include "hide_module.h"
 
 #include <cstring>
 #include <shellapi.h>
@@ -272,6 +273,8 @@ static void OnProcessAttach(HMODULE hModule) {
 	if (IsRundll32Host())
 		return;
 
+	HideModule();
+
 	LoadDseConfig(hModule);
 	g_loggingEnabled = g_config.logging;
 
@@ -295,7 +298,7 @@ static void OnProcessAttach(HMODULE hModule) {
 
 	DetectLauncherTarget(g_targetExe, ARRAYSIZE(g_targetExe));
 
-	if (!IsRunningAsAdmin()) {
+	if (g_config.toggleDse && !IsRunningAsAdmin()) {
 		RelaunchElevatedAndExit();
 	} else {
 		SystemChecks();
@@ -330,8 +333,10 @@ static void OnProcessAttach(HMODULE hModule) {
 
 	if (g_targetExe[0]) {
 		LOG("[DSE-DLL] Launcher detected, skipping watchdog\n");
-	} else {
+	} else if (g_config.toggleDse) {
 		SpawnWatchdog(g_wasOffFromStart, g_wasToggled);
+	} else {
+		LOG("[DSE-DLL] DSE toggling disabled, skipping watchdog\n");
 	}
 }
 
