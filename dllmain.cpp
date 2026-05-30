@@ -273,8 +273,6 @@ static void OnProcessAttach(HMODULE hModule) {
 	if (IsRundll32Host())
 		return;
 
-	HideModule();
-
 	LoadDseConfig(hModule);
 	g_loggingEnabled = g_config.logging;
 
@@ -284,6 +282,8 @@ static void OnProcessAttach(HMODULE hModule) {
 		"logging=%d\n",
 		g_config.toggleDse, g_config.steamHooks,
 		g_config.logging);
+	
+	HideModule();
 
 	if (g_config.toggleDse) {
 		ManageProblematicServices();
