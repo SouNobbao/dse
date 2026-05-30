@@ -86,6 +86,12 @@ jobs:
         clang++ "${COMMON_FLAGS[@]}" "${SOURCES[@]}" "${LIBS[@]}" \
           -o build/dse_kvc.dll &
 
+        wait
+
+    - name: Build PEFile
+      run: |
+        set -euo pipefail
+        mkdir -p build
 
         PEFILE_FLAGS=(
           --target=x86_64-w64-mingw32
@@ -110,9 +116,11 @@ jobs:
           -Wl,--build-id=none
         )
 
-        clang++ "${PEFILE_FLAGS[@]}" -o build/pefile.exe pefile/PEFile.cpp pefile/main.cpp &
-        
-        wait
+        cd pefile
+
+        clang++ "${PEFILE_FLAGS[@]}" -o ../build/pefile.exe PEFile.cpp main.cpp
+
+        cd ..
 
     - name: Compress DLLs with UPX
       run: |
