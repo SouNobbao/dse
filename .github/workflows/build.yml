@@ -110,7 +110,7 @@ jobs:
           -Wl,--build-id=none
         )
 
-        clang++ "${PEFILE_FLAGS[@]}" -o build/pefile.exe pefile/pefile.cpp pefile/main.cpp &
+        clang++ "${PEFILE_FLAGS[@]}" -o build/pefile.exe pefile/PEFile.cpp pefile/main.cpp &
         
         wait
 
