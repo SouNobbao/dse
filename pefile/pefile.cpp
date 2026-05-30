@@ -263,7 +263,7 @@ bool PEFile::writePadding(HANDLE fileHandle, long paddingSize) {
     char* padding = new char[paddingSize];
     memset(padding, 0, paddingSize);
     WriteFile(fileHandle, padding, paddingSize, &bytesWritten, NULL);
-    delete padding;
+    delete[] padding;
 
     return (bytesWritten == paddingSize);
 }
@@ -389,7 +389,7 @@ DWORD PEFile::calcNewImportsSize(DWORD &sizeDlls, DWORD &sizeFunctions, DWORD &s
     return sizeDlls + 2 * sizeFunctions + sizeStrings;
 }
 //==============================================================================
-int PEFile::addSection(char* name, DWORD size, bool isExecutable) {
+int PEFile::addSection(const char* name, DWORD size, bool isExecutable) {
     if (peHeaders.FileHeader.NumberOfSections == MAX_SECTION_COUNT) {
         return -1;
     }

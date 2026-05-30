@@ -4,7 +4,7 @@
 #include <string.h>
 #include <sstream> 
 #include <fstream>
-#include "pefile.h"
+#include "PEFile.h"
 
 static bool isPe32Plus(const char* path) {
     std::ifstream file(path, std::ios::binary);
@@ -48,7 +48,7 @@ static bool isPe32Plus(const char* path) {
 }
 
 int main(int argc, char* argv[]) {
-    if (argv[1] == "help" || argv[1] == "-h" || argv[1] == "--help") {
+    if (strcmp(argv[1], "help") == 0 || strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) {
         std::cout << "pefile.exe [.dll/.exe] [.dll] [function separated by commas]" << std::endl;
         return 1;
     }

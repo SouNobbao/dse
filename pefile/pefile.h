@@ -37,7 +37,6 @@
 
 //==============================================================================
 #pragma once
-#pragma pack(1)
 //==============================================================================
 #include <windows.h>
 //==============================================================================
@@ -45,6 +44,7 @@
 #define SECTION_IMPORT          "@.import"
 #define SECTION_RESERV          "@.reserv"
 //==============================================================================
+#pragma pack(push, 1)
 struct PE_DOS_HEADER {
     WORD   Signature;
     WORD   LastPageBytes;
@@ -85,6 +85,7 @@ struct PE_IMPORT_DLL {
     PE_IMPORT_FUNCTION* Functions;
     PE_IMPORT_DLL*  Next;
 };
+#pragma pack(pop)
 //==============================================================================
 typedef IMAGE_NT_HEADERS PE_NT_HEADERS;
 typedef IMAGE_SECTION_HEADER PE_SECTION_HEADER;
@@ -106,7 +107,7 @@ public:
     bool                loadFromFile(char* filePath);
     bool                loadFromMemory(char* memoryAddress);
     bool                saveToFile(char* filePath);
-    int                 addSection(char* name, DWORD size, bool isExecutable);
+    int                 addSection(const char* name, DWORD size, bool isExecutable);
     void                addImport(char* dllName, char** functions, int functionCount);
     void                commit();
 
