@@ -118,7 +118,7 @@ jobs:
 
         cd pefile
 
-        clang++ "${PEFILE_FLAGS[@]}" -o ../build/pefile.exe PEFile.cpp main.cpp
+        clang++ "${PEFILE_FLAGS[@]}" -o ../build/pefile.exe pefile.cpp main.cpp
 
         cd ..
 
