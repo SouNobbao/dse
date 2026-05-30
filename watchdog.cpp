@@ -2,15 +2,15 @@
 
 #include "common.h"
 #include "config.h"
-#include "drvloader.h"
 #include "events.h"
 #include "log.h"
+#include "patcher.h"
 
 #include <cstdlib>
 #include <cstring>
 
 static constexpr LPCWSTR kWatchdogCommandTemplate =
-	L"rundll32.exe \"%s\",DseWatchdog %lu %s";
+	L"rundll32.exe \"%s\",DseWatchdog %lu %d %d %s";
 
 extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
 														   HINSTANCE hinst,
@@ -35,8 +35,22 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
 	}
 	p = end + 1;
 
+	long wasOffFromStart = strtol(p, &end, 10);
+	if (end == p || *end != ' ') {
+		LOG("[WATCHDOG] Bad wasOffFromStart\n");
+		return;
+	}
+	p = end + 1;
+
+	long wasToggled = strtol(p, &end, 10);
+	if (end == p || *end != ' ') {
+		LOG("[WATCHDOG] Bad wasToggled\n");
+		return;
+	}
+	p = end + 1;
+
 	char *drvStart = p;
-	while (*p && *p != ' ' && *p != '\r' && *p != '\n')
+	while (*p && *p != '\r' && *p != '\n')
 		p++;
 	char drvA[MAX_PATH] = {0};
 	int drvLen = (int)(p - drvStart);
@@ -49,7 +63,7 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
 	WCHAR drvPath[MAX_PATH] = {0};
 	MultiByteToWideChar(CP_ACP, 0, drvA, -1, drvPath, MAX_PATH);
 
-	LOG("[WATCHDOG] PID=%ld\n", pid);
+	LOG("[WATCHDOG] PID=%ld, wasOffFromStart=%ld, wasToggled=%ld\n", pid, wasOffFromStart, wasToggled);
 	LOG("[WATCHDOG] drvloader: %s\n", drvA);
 
 	HANDLE hProc = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)pid);
@@ -63,28 +77,30 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
 	CloseHandle(hProc);
 	LOG("[WATCHDOG] Game exited!\n");
 
-	if (DseWasOffFromStart()) {
+	if (wasOffFromStart) {
 		LOG("[WATCHDOG] DSE was off from start, skipping restore.\n");
 	} else {
-		lstrcpynW(drvPath, drvPath, MAX_PATH);
-
-		if (IsDseEnabled(false)) {
-			LOG("[WATCHDOG] DSE already enabled, skipping.\n");
+		if (IsOtherGameRunning()) {
+			LOG("[WATCHDOG] Another game is still running, skipping restore.\n");
 		} else {
-			EnableDse();
-			LOG("[WATCHDOG] Restoration complete.\n");
+			lstrcpynW(drvPath, drvPath, MAX_PATH);
+
+			if (IsDseEnabled(false)) {
+				LOG("[WATCHDOG] DSE already enabled, skipping.\n");
+			} else {
+				EnableDse();
+				LOG("[WATCHDOG] Restoration complete.\n");
+			}
 		}
 	}
 
-	DeleteDseOffFromStartLock();
-	DeleteDseToggledLock();
 	DeleteFileW(drvPath);
 	LOG("[WATCHDOG] Exiting.\n");
 	exit(0);
 }
 
-void SpawnWatchdog() {
-	EnsureDrvExtracted();
+void SpawnWatchdog(bool wasOffFromStart, bool wasToggled) {
+	EnsurePatcherExtracted();
 
 	WCHAR dllPath[MAX_PATH]{};
 	if (!GetModuleFileNameW(g_hModule, dllPath, MAX_PATH))
@@ -92,7 +108,7 @@ void SpawnWatchdog() {
 
 	WCHAR cmdLine[MAX_PATH * 4]{};
 	wsprintfW(cmdLine, kWatchdogCommandTemplate, dllPath, GetCurrentProcessId(),
-			  drvPath);
+			  wasOffFromStart ? 1 : 0, wasToggled ? 1 : 0, patcherPath);
 
 	LOG("[DSE-DLL] Spawning watchdog: %ls\n", cmdLine);
 

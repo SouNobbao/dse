@@ -3,13 +3,14 @@
 
 #include "common.h"
 #include "config.h"
-#include "drvloader.h"
 #include "events.h"
 #include "injector.h"
 #include "launchers.h"
 #include "log.h"
 #include "minhook/include/MinHook.h"
+#include "patcher.h"
 #include "watchdog.h"
+#include "afterburner.h"
 
 #include <cstring>
 #include <shellapi.h>
@@ -19,6 +20,9 @@
 #pragma comment(lib, "shlwapi.lib")
 
 static WCHAR g_targetExe[MAX_PATH] = {0};
+static bool g_wasOffFromStart = false;
+static bool g_wasToggled = false;
+
 extern "C" __declspec(dllexport) void DseDll(void) {}
 
 HMODULE g_hModule = nullptr;
@@ -174,7 +178,7 @@ BOOL WINAPI HookedCreateProcessW(
 		}
 	}
 
-	if (g_config.toggleDse && !DseWasOffFromStart()) {
+	if (g_config.toggleDse && !g_wasOffFromStart) {
 		if (IsDseEnabled(false)) {
 			LOG("[DSE-DLL] CreateProcessW > disabling DSE\n");
 			DisableDse();
@@ -224,9 +228,9 @@ HWND WINAPI HookedCreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName,
 										hWndParent, hMenu, hInstance, lpParam);
 
 	static bool s_dseRestored = false;
-	if (!s_dseRestored && g_config.toggleDse && !DseWasOffFromStart() && hwnd != nullptr) {
+	if (!s_dseRestored && g_config.toggleDse && !g_wasOffFromStart && hwnd != nullptr) {
 		s_dseRestored = true;
-		if (DseWasToggled()) {
+		if (g_wasToggled) {
 			LOG("[DSE-DLL] Window created > we disabled DSE earlier, restoring now...\n");
 			EnableDse();
 		} else {
@@ -276,6 +280,10 @@ static void OnProcessAttach(HMODULE hModule) {
 		g_config.toggleDse, g_config.steamHooks,
 		g_config.logging);
 
+	if (IsAfterburnerRunning()) {
+		SetAfterburnerRunningState(true);
+	}
+
 	DetectLauncherTarget(g_targetExe, ARRAYSIZE(g_targetExe));
 
 	if (!IsRunningAsAdmin()) {
@@ -283,19 +291,19 @@ static void OnProcessAttach(HMODULE hModule) {
 	} else {
 		if (g_config.toggleDse) {
 			if (!IsDseEnabled(true)) {
-				if (DseWasToggled()) {
+				if (CheckAndSetDseToggled()) {
 					LOG("[DSE-DLL] DSE off (parent disabled it), proceeding normally\n");
+					g_wasToggled = true;
 				} else {
 					LOG("[DSE-DLL] DSE off from start (testsigning etc.)\n");
-					CreateDseOffFromStartLock();
+					SetDseOffFromStart();
+					g_wasOffFromStart = true;
 				}
 			} else {
-				// DSE is on — delete any stale locks from a previous session
-				DeleteDseOffFromStartLock();
-				DeleteDseToggledLock();
 				LOG("[DSE-DLL] Running as ADMIN, disabling DSE...\n");
 				DisableDse();
-				CreateDseToggledLock();
+				SetDseToggled();
+				g_wasToggled = true;
 			}
 		} else {
 			LOG("[DSE-DLL] DSE toggling disabled by config\n");
@@ -312,7 +320,7 @@ static void OnProcessAttach(HMODULE hModule) {
 	if (g_targetExe[0]) {
 		LOG("[DSE-DLL] Launcher detected, skipping watchdog\n");
 	} else {
-		SpawnWatchdog();
+		SpawnWatchdog(g_wasOffFromStart, g_wasToggled);
 	}
 }
 
@@ -321,20 +329,24 @@ static void OnProcessDetach() {
 		return;
 
 	LOG("[DSE-DLL] Detaching...\n");
-	if (g_config.toggleDse && !DseWasOffFromStart()) {
+	CloseDseEvents();
+	
+	if (g_config.toggleDse && !g_wasOffFromStart) {
 		if (IsDseEnabled(false)) {
 			LOG("[DSE-DLL] Detaching > DSE already enabled, skipping\n");
 		} else {
-			LOG("[DSE-DLL] Detaching... restoring DSE...\n");
-			EnableDse();
+			if (IsOtherGameRunning()) {
+				LOG("[DSE-DLL] Detaching > another game is running, skipping restore\n");
+			} else {
+				LOG("[DSE-DLL] Detaching... restoring DSE...\n");
+				EnableDse();
+			}
 		}
 	}
-	DeleteDseOffFromStartLock();
-	DeleteDseToggledLock();
 	LOG("[DSE-DLL] Uninitializing MinHook...\n");
 	MH_Uninitialize();
-	LOG("[DSE-DLL] Deleting drvloader...\n");
-	DeleteDrvFile();
+	LOG("[DSE-DLL] Deleting patcher...\n");
+	DeletePatcherFile();
 	LOG("[DSE-DLL] Detached!\n");
 }
 

@@ -3,10 +3,12 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-void CreateDseOffFromStartLock();
-void DeleteDseOffFromStartLock();
-bool DseWasOffFromStart();
+bool CheckAndSetDseOffFromStart();
+void SetDseOffFromStart();
 
-void CreateDseToggledLock();
-void DeleteDseToggledLock();
-bool DseWasToggled();
+bool CheckAndSetDseToggled();
+void SetDseToggled();
+
+void CloseDseEvents();
+bool IsOtherGameRunning();
+

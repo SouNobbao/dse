@@ -8,4 +8,4 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
                                                            LPSTR lpszCmdLine,
                                                            int nCmdShow);
 
-void SpawnWatchdog();
+void SpawnWatchdog(bool wasOffFromStart, bool wasToggled);

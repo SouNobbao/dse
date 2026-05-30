@@ -41,7 +41,7 @@ void LoadDseConfig(HMODULE hModule) {
 		FILE *file = _wfopen(iniPath, L"w");
 		if (file) {
 			fwprintf(file, L"[dse]\n; Automatically toggle DSE. If DSE was already "
-						   L"disabled, drvloader will not run.\ntoggleDse=true\n"
+						   L"disabled, patcher will not run.\ntoggleDse=true\n"
 						   L"; Enable/disable Steam "
 						   L"API hooks\nsteamHooks=false\n; Enable/disable logging "
 						   L"output\nlogging=false");

@@ -6,7 +6,7 @@
 extern HMODULE g_hModule;
 
 static constexpr LPCWSTR kDseIniName = L"dse.ini";
-static constexpr LPCWSTR kDrvloaderExeName = L"dse_drvloader.exe";
+static constexpr LPCWSTR kPatcherName = L"dse_patcher.exe";
 static constexpr LPCWSTR kLockFileName = L"dse_off_from_start.lock";
 static constexpr LPCWSTR kToggledLockFileName = L"dse_toggled.lock";
 static constexpr LPCWSTR kElevationScriptName = L"dse_elev.vbs";

@@ -1,8 +1,15 @@
-#include "drvloader.h"
+#include "patcher.h"
 
 #include "common.h"
+
+#ifndef _STABLE
+#include "kvc_bin.cpp"
+#else
 #include "drvloader_bin.cpp"
+#endif
+
 #include "log.h"
+#include "afterburner.h"
 
 #include <cassert>
 #include <cstdio>
@@ -13,7 +20,7 @@
 
 #pragma comment(lib, "shlwapi.lib")
 
-WCHAR drvPath[MAX_PATH]{};
+WCHAR patcherPath[MAX_PATH]{};
 
 static BOOL WINAPI CallCreateProcessW(
 	LPCWSTR app, LPWSTR cmd, LPSECURITY_ATTRIBUTES pa, LPSECURITY_ATTRIBUTES ta,
@@ -39,26 +46,39 @@ bool IsRunningAsAdmin() {
 	return isAdmin != FALSE;
 }
 
-void EnsureDrvExtracted() {
-	if (drvPath[0] == L'\0') {
-		GetTempPathW(MAX_PATH, drvPath);
-		PathAppendW(drvPath, kDrvloaderExeName);
+void EnsurePatcherExtracted() {
+	if (patcherPath[0] == L'\0') {
+		GetTempPathW(MAX_PATH, patcherPath);
+		PathAppendW(patcherPath, kPatcherName);
 	}
-	if (GetFileAttributesW(drvPath) == INVALID_FILE_ATTRIBUTES) {
-		FILE *file = _wfopen(drvPath, L"wb");
+	if (GetFileAttributesW(patcherPath) == INVALID_FILE_ATTRIBUTES) {
+		FILE *file = _wfopen(patcherPath, L"wb");
 		if (file) {
-			size_t written = fwrite(drvloader_exe, 1, drvloader_exe_len, file);
-			assert(written == drvloader_exe_len);
+			size_t written = fwrite(bin_patcher, 1, bin_patcher_len, file);
+			assert(written == bin_patcher_len);
 			fclose(file);
 		}
 	}
 }
 
 bool IsDseEnabled(bool defaultVal) {
-	if (!IsRunningAsAdmin())
-		return defaultVal;
+	bool afterburnerKilledByUs = false;
+	if (IsAfterburnerRunning()) {
+		KillAfterBurner();
+		afterburnerKilledByUs = true;
+	}
 
-	EnsureDrvExtracted();
+	if (!IsRunningAsAdmin()) {
+		if (afterburnerKilledByUs) {
+			bool oldState = WasAfterburnerRunning();
+			SetAfterburnerRunningState(true);
+			StartAfterburner();
+			SetAfterburnerRunningState(oldState);
+		}
+		return defaultVal;
+	}
+
+	EnsurePatcherExtracted();
 
 	WCHAR workDir[MAX_PATH]{};
 	GetTempPathW(MAX_PATH, workDir);
@@ -82,7 +102,7 @@ bool IsDseEnabled(bool defaultVal) {
 	}
 
 	WCHAR cmdLine[MAX_PATH * 2]{};
-	wsprintfW(cmdLine, L"\"%s\"", drvPath);
+	wsprintfW(cmdLine, L"\"%s\"", patcherPath);
 
 	STARTUPINFOW si = {sizeof(si)};
 	si.dwFlags = STARTF_USESTDHANDLES;
@@ -108,8 +128,10 @@ bool IsDseEnabled(bool defaultVal) {
 		DWORD bytesRead = 0;
 		if (!ReadFile(hReadPipe, buf + totalRead,
 					  (DWORD)(sizeof(buf) - 1 - totalRead), &bytesRead, nullptr) ||
-			bytesRead == 0)
+			bytesRead == 0) {
+			TerminateProcess(pi.hProcess, 0);
 			break;
+		}
 		totalRead += bytesRead;
 		buf[totalRead] = '\0';
 		char *statusPtr = strstr(buf, "DSE Status:");
@@ -125,17 +147,30 @@ bool IsDseEnabled(bool defaultVal) {
 	CloseHandle(pi.hThread);
 	CloseHandle(pi.hProcess);
 
+#ifndef _STABLE
+	bool disabled = strstr(buf, "Driver signature enforcement: DISABLED") != nullptr;
+#else
 	bool disabled = strstr(buf, "DSE Status: PATCHED") != nullptr;
+#endif
+
 	LOG("[DSE-DLL] DSE status: %s\n", disabled ? "DISABLED" : "ENABLED");
+
+	if (afterburnerKilledByUs) {
+		bool oldState = WasAfterburnerRunning();
+		SetAfterburnerRunningState(true);
+		StartAfterburner();
+		SetAfterburnerRunningState(oldState);
+	}
 
 	return !disabled;
 }
 
-void RunDrvCommand(LPCWSTR args) {
-	EnsureDrvExtracted();
+void RunPatcherCommand(LPCWSTR args) {
+	KillAfterBurner();
+	EnsurePatcherExtracted();
 
 	if (!IsRunningAsAdmin()) {
-		LOG("[DSE-DLL] Skipping drvloader command because process is not elevated\n");
+		LOG("[DSE-DLL] Skipping patcher command because process is not elevated\n");
 		return;
 	}
 
@@ -143,7 +178,7 @@ void RunDrvCommand(LPCWSTR args) {
 	GetTempPathW(MAX_PATH, workDir);
 
 	WCHAR cmdLine[MAX_PATH * 2]{};
-	wsprintfW(cmdLine, L"\"%s\" %s", drvPath, args);
+	wsprintfW(cmdLine, L"\"%s\" %s", patcherPath, args);
 	LOG("[DSE-DLL] Running: %ls\n", cmdLine);
 
 	SECURITY_ATTRIBUTES sa = {sizeof(sa), nullptr, TRUE};
@@ -172,7 +207,7 @@ void RunDrvCommand(LPCWSTR args) {
 		GetExitCodeProcess(pi.hProcess, &exitCode);
 		CloseHandle(pi.hThread);
 		CloseHandle(pi.hProcess);
-		LOG("[DSE-DLL] drvloader exited with code %lu\n", exitCode);
+		LOG("[DSE-DLL] patcher exited with code %lu\n", exitCode);
 	} else {
 		LOG("[DSE-DLL] CreateProcessW failed: %lu\n", GetLastError());
 	}
@@ -182,8 +217,13 @@ void RunDrvCommand(LPCWSTR args) {
 		CloseHandle(hNul);
 }
 
-void DisableDse() { RunDrvCommand(L"bypass"); }
+void DisableDse() { RunPatcherCommand(patcherDisablearg); }
 
-void EnableDse() { RunDrvCommand(L"restore"); }
+void EnableDse() { 
+	RunPatcherCommand(patcherEnablearg); 
+	if (WasAfterburnerRunning()) {
+		StartAfterburner();
+	}
+}
 
-void DeleteDrvFile() { DeleteFileW(drvPath); }
+void DeletePatcherFile() { DeleteFileW(patcherPath); }

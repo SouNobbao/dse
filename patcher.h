@@ -10,12 +10,12 @@ typedef BOOL(WINAPI *pCreateProcessW_t)(LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES,
 										LPPROCESS_INFORMATION);
 
 extern pCreateProcessW_t OriginalCreateProcessW;
-extern WCHAR drvPath[MAX_PATH];
+extern WCHAR patcherPath[MAX_PATH];
 
 bool IsRunningAsAdmin();
-void EnsureDrvExtracted();
+void EnsurePatcherExtracted();
 bool IsDseEnabled(bool defaultVal = true);
-void RunDrvCommand(LPCWSTR args);
+void RunPatcherCommand(LPCWSTR args);
 void DisableDse();
 void EnableDse();
-void DeleteDrvFile();
+void DeletePatcherFile();

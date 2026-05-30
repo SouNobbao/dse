@@ -1,66 +1,65 @@
 #include "events.h"
-
-#include "common.h"
 #include "log.h"
 
-#include <shlwapi.h>
+static HANDLE g_hOffFromStart = nullptr;
+static HANDLE g_hToggled = nullptr;
 
-#pragma comment(lib, "shlwapi.lib")
+static const LPCWSTR kOffFromStartEventName = L"Local\\DseDll_OffFromStart";
+static const LPCWSTR kToggledEventName = L"Local\\DseDll_Toggled";
 
-static WCHAR g_lockPath[MAX_PATH] = {0};
-static WCHAR g_toggledPath[MAX_PATH] = {0};
+bool CheckAndSetDseOffFromStart() {
+  HANDLE hEvent = OpenEventW(EVENT_ALL_ACCESS, FALSE, kOffFromStartEventName);
+  if (hEvent) {
+    g_hOffFromStart = hEvent;
+    return true;
+  }
+  return false;
+}
 
-static void EnsureLockPath() {
-  if (g_lockPath[0] == L'\0') {
-    GetTempPathW(MAX_PATH, g_lockPath);
-    PathAppendW(g_lockPath, kLockFileName);
+void SetDseOffFromStart() {
+  if (!g_hOffFromStart) {
+    g_hOffFromStart =
+        CreateEventW(nullptr, TRUE, FALSE, kOffFromStartEventName);
   }
 }
 
-static void EnsureToggledPath() {
-  if (g_toggledPath[0] == L'\0') {
-    GetTempPathW(MAX_PATH, g_toggledPath);
-    PathAppendW(g_toggledPath, kToggledLockFileName);
+bool CheckAndSetDseToggled() {
+  HANDLE hEvent = OpenEventW(EVENT_ALL_ACCESS, FALSE, kToggledEventName);
+  if (hEvent) {
+    g_hToggled = hEvent;
+    return true;
+  }
+  return false;
+}
+
+void SetDseToggled() {
+  if (!g_hToggled) {
+    g_hToggled = CreateEventW(nullptr, TRUE, FALSE, kToggledEventName);
   }
 }
 
-void CreateDseOffFromStartLock() {
-  EnsureLockPath();
-  HANDLE hFile = CreateFileW(g_lockPath, GENERIC_WRITE, 0, nullptr,
-                             CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (hFile != INVALID_HANDLE_VALUE)
-    CloseHandle(hFile);
-  LOG("[DSE-DLL] Created dse-off-from-start lock: %ls\n", g_lockPath);
-}
-
-void DeleteDseOffFromStartLock() {
-  EnsureLockPath();
-  if (GetFileAttributesW(g_lockPath) != INVALID_FILE_ATTRIBUTES) {
-    DeleteFileW(g_lockPath);
-    LOG("[DSE-DLL] Deleted dse-off-from-start lock\n");
+void CloseDseEvents() {
+  if (g_hOffFromStart) {
+    CloseHandle(g_hOffFromStart);
+    g_hOffFromStart = nullptr;
+  }
+  if (g_hToggled) {
+    CloseHandle(g_hToggled);
+    g_hToggled = nullptr;
   }
 }
 
-bool DseWasOffFromStart() {
-  EnsureLockPath();
-  return GetFileAttributesW(g_lockPath) != INVALID_FILE_ATTRIBUTES;
-}
-
-void CreateDseToggledLock() {
-  EnsureToggledPath();
-  HANDLE hFile = CreateFileW(g_toggledPath, GENERIC_WRITE, 0, nullptr,
-                             CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (hFile != INVALID_HANDLE_VALUE)
-    CloseHandle(hFile);
-}
-
-void DeleteDseToggledLock() {
-  EnsureToggledPath();
-  if (GetFileAttributesW(g_toggledPath) != INVALID_FILE_ATTRIBUTES)
-    DeleteFileW(g_toggledPath);
-}
-
-bool DseWasToggled() {
-  EnsureToggledPath();
-  return GetFileAttributesW(g_toggledPath) != INVALID_FILE_ATTRIBUTES;
+bool IsOtherGameRunning() {
+  HANDLE hToggled = OpenEventW(EVENT_ALL_ACCESS, FALSE, kToggledEventName);
+  if (hToggled) {
+    CloseHandle(hToggled);
+    return true;
+  }
+  HANDLE hOffFromStart =
+      OpenEventW(EVENT_ALL_ACCESS, FALSE, kOffFromStartEventName);
+  if (hOffFromStart) {
+    CloseHandle(hOffFromStart);
+    return true;
+  }
+  return false;
 }
