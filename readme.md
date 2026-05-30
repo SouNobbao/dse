@@ -7,12 +7,12 @@
 
 ## Steam version (overlay + input)
 
-0. Enable in config file.
-1. Add the DLL to the load list.
-2. Remove `coldclient/loader.dll`.
-3. Use [OpenSteamTool](https://github.com/OpenSteam001/OpenSteamTool).
-4. Put Lua files in `steam/config/lua` and manifests in `steamdepot/cache`.
-5. Click Play.
+1. Enable in config file.
+2. Add the DLL to the load list.
+3. Remove `coldclient/loader.dll`.
+4. Use [OpenSteamTool](https://github.com/OpenSteam001/OpenSteamTool).
+5. Put Lua files in `steam/config/lua` and manifests in `steamdepot/cache`.
+6. Click Play.
 
 ## Linking the DLL for supported launchers
 
@@ -26,12 +26,13 @@
 
 ### PEFile (TUI)
 
-1. Download `pefile.exe` in releases
-2. Run pefile.exe with the correct arguments
-3. Command Example
+1. `pe_reader.exe` is used to check which dlls are linked on the exe
+2. Download `pefile.exe` in releases
+3. Run pefile.exe with the correct arguments
+4. Command Example
     > `pefile.exe example.dll dse.dll DseDll`
-4. Get the example_mod.dll file
-5. Rename to example.dll
+5. Get the example_mod.dll file
+6. Rename to example.dll
 
 You can also use the pre-linked launchers from the release build.
 
@@ -46,10 +47,3 @@ The DLL extracts `drvloader or kvc` and a temporary VBS elevation helper, then s
 
 > [!NOTE]
 > To add more launchers, add their configuration under `launchers.h`.
-
-## TODO
-
-- [x] fix afterburner.
-- [x] handle conflict between services (check dse.ini on this repo, for examples on how to setup) <- not been tested fully.
-- [x] check if vbs/hvci is off (simple regedit check)
-- [x] handle `kvc/drvloader` correctly.

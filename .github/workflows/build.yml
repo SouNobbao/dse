@@ -207,6 +207,7 @@ jobs:
           ./release/steamclient_loader_x64.exe
           ./release/build.7z
           ./release/pefile.exe
+          ./release/pe_reader.exe
           ./release/sha256hashes.txt
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
