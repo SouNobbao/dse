@@ -14,8 +14,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     outputs:
-      drvloader_updated: ${{ steps.fetch_drvloader.outputs.drvloader_changed == 'true' }}
-      kvc_updated: ${{ steps.fetch_kvc.outputs.kvc_changed == 'true' }}
+      drvloader_updated: ${{ steps.fetch_drvloader.outputs.drvloader_changed }}
+      kvc_updated: ${{ steps.fetch_kvc.outputs.kvc_changed }}
 
     steps:
     - name: Checkout code
@@ -270,20 +270,30 @@ jobs:
 
     - name: Generate release info
       id: release_info
+      env:
+        KVC_UPDATED: ${{ needs.build.outputs.kvc_updated }}
+        DRVLOADER_UPDATED: ${{ needs.build.outputs.drvloader_updated }}
       run: |
-        echo "tag=v$(date +'%Y.%m.%d')-$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
-        echo "date=$(date +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
-        MONTH_YEAR="$(date +'%m.%Y')"
-        echo "month_year=$MONTH_YEAR" >> "$GITHUB_OUTPUT"
+        echo "tag=v$(date +'%Y.%m.%d')-${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+        echo "date=$(date +'%Y-%m-%d %H:%M:%S UTC')" >> "$GITHUB_OUTPUT"
+        echo "month_year=$(date +'%m.%Y')" >> "$GITHUB_OUTPUT"
 
-        if [[ "${{ needs.build.outputs.kvc_updated }}" == "true" ]]; then
-          echo "kvc_note=- kvc was updated to latest ([kvc repo](https://github.com/wesmar/kvc/)>> "$GITHUB_OUTPUT"
+        if [ "$KVC_UPDATED" = "true" ]; then
+          {
+            echo "kvc_note<<EOF"
+            echo "- kvc was updated to latest ([kvc repo](https://github.com/wesmar/kvc/))"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
         else
           echo "kvc_note=" >> "$GITHUB_OUTPUT"
         fi
 
-        if [[ "${{ needs.build.outputs.drvloader_updated }}" == "true" ]]; then
-          echo "drvloader_note=- drvloader was updated to latest ([drvloader repo](https://github.com/SouNobbao/drvloader-fork/))" >> "$GITHUB_OUTPUT"
+        if [ "$DRVLOADER_UPDATED" = "true" ]; then
+          {
+            echo "drvloader_note<<EOF"
+            echo "- drvloader was updated to latest ([drvloader repo](https://github.com/SouNobbao/drvloader-fork/))"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
         else
           echo "drvloader_note=" >> "$GITHUB_OUTPUT"
         fi
