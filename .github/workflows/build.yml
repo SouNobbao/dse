@@ -277,13 +277,13 @@ jobs:
         echo "month_year=$MONTH_YEAR" >> "$GITHUB_OUTPUT"
 
         if [[ "${{ needs.build.outputs.kvc_updated }}" == "true" ]]; then
-          echo "kvc_note=> kvc was updated to latest ([kvc repo](https://github.com/wesmar/kvc/) - \`KVC Framework - Release \$MONTH_YEAR\`)" >> "$GITHUB_OUTPUT"
+          echo "kvc_note=- kvc was updated to latest ([kvc repo](https://github.com/wesmar/kvc/)>> "$GITHUB_OUTPUT"
         else
           echo "kvc_note=" >> "$GITHUB_OUTPUT"
         fi
 
         if [[ "${{ needs.build.outputs.drvloader_updated }}" == "true" ]]; then
-          echo "drvloader_note=> drvloader was updated to latest ([drvloader repo](https://github.com/SouNobbao/drvloader-fork/))" >> "$GITHUB_OUTPUT"
+          echo "drvloader_note=- drvloader was updated to latest ([drvloader repo](https://github.com/SouNobbao/drvloader-fork/))" >> "$GITHUB_OUTPUT"
         else
           echo "drvloader_note=" >> "$GITHUB_OUTPUT"
         fi
