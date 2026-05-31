@@ -173,10 +173,13 @@ jobs:
 
           > [!NOTE]
           > Please note that all dlls (and pefile) are compressed with UPX, so if you want to analyze them, please just use source code!!
-          
+
           > [!NOTE]
-          > Windows 10 users should use KVC as drvloader does not run correctly in Windows 10
+          > Windows 10 or Windows 11 Insider users (this build doesnt provide pdbs from time to time) users should use KVC as drvloader does not run correctly without those
           > also note we can't rely on kvc --safe mode as it doesn't show its state
+
+          > [!WARNING]
+          > BSODS CAUSED BY KVC IS NOT MY PROBLEM AS I WONT GIVE SUPPORT TO --SAFE MODE (if you wanna use that mode, send a working patch)
 
           ```
           Includes:
