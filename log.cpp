@@ -53,6 +53,13 @@ void Log(const char *fmt, ...) {
   vsnprintf_s(buffer, sizeof(buffer), _TRUNCATE, fmt, args);
   va_end(args);
 
+  static bool s_hasLast = false;
+  static char s_lastLine[sizeof(buffer)]{};
+  if (s_hasLast && std::strcmp(buffer, s_lastLine) == 0)
+    return;
+  s_hasLast = true;
+  strcpy_s(s_lastLine, sizeof(s_lastLine), buffer);
+
   printf("%s", buffer);
   AppendLogLine(buffer);
 }
