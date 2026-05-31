@@ -5,13 +5,14 @@
 #include "common.h"
 #include "config.h"
 #include "events.h"
+#include "hide_module.h"
 #include "injector.h"
 #include "launchers.h"
 #include "log.h"
 #include "minhook/include/MinHook.h"
 #include "patcher.h"
 #include "watchdog.h"
-#include "hide_module.h"
+
 
 #include <cstring>
 #include <shellapi.h>
@@ -282,25 +283,24 @@ static void OnProcessAttach(HMODULE hModule) {
 		"logging=%d\n",
 		g_config.toggleDse, g_config.steamHooks,
 		g_config.logging);
-	
+
 	HideModule();
-
-	if (g_config.toggleDse) {
-		ManageProblematicServices();
-		ManageProblematicTasks();
-	}
-
-	CheckAndSetAfterburnerEvent();
-
-	if (g_config.toggleDse && IsAfterburnerRunning()) {
-		SetAfterburnerRunningState(true);
-	}
-
-	DetectLauncherTarget(g_targetExe, ARRAYSIZE(g_targetExe));
 
 	if (g_config.toggleDse && !IsRunningAsAdmin()) {
 		RelaunchElevatedAndExit();
 	} else {
+		DetectLauncherTarget(g_targetExe, ARRAYSIZE(g_targetExe));
+		if (g_config.toggleDse) {
+			ManageProblematicServices();
+			ManageProblematicTasks();
+		}
+
+		CheckAndSetAfterburnerEvent();
+
+		if (g_config.toggleDse && IsAfterburnerRunning()) {
+			SetAfterburnerRunningState(true);
+		}
+
 		SystemChecks();
 
 		if (g_config.toggleDse) {
