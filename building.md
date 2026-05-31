@@ -7,18 +7,9 @@
 
 ## Preparation
 
-Before building, ensure you have the necessary patcher binaries dumped into C++ source files. 
-You can dump these files using `xxd` (for example, its available under git-bash):
-```bash
-xxd -i binary > name_bin.cpp
-```
-
-### Naming Requirements
-Ensure your binary array and variables are named correctly in the dumped file:
-- `bin_patcher`: The hex binary array.
-- `bin_patcher_len`: The size of the binary.
-- `patcherEnablearg`: The "restore command" argument.
-- `patcherDisablearg`: The "bypass command" argument.
+Before building, ensure you have the necessary patcher binaries in `bins`
+- `drvloader` is available [here](http://github.com/SouNobbao/drvloader-fork/releases/latest)
+- `kvc` is available [here](https://github.com/wesmar/kvc/releases/tag/latest)
 
 ## Compiling
 
@@ -36,3 +27,11 @@ clang++ --target=x86_64-w64-mingw32 -O3 -D_STABLE -Wno-deprecated -mwindows -mun
     -lshlwapi -luser32 -lkernel32 -ladvapi32 -lshell32 -lole32 -loleaut32 \
     -o build/dse.dll
 ```
+
+## Disclaimer 
+The extras files are optional
+if you wanna know where to get them
+
+- pe_reader > [LIAF](https://github.com/lief-project/LIEF)
+- steamclient_loader_x64.exe > [gbe_fork](https://github.com/Detanup01/gbe_fork/)
+- hypervisor-launcher.exe > [hypervisor-launcher](https://git.denuvosanctuary.com/andreh/hypervisor-launcher/)

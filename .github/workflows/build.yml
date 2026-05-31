@@ -30,8 +30,8 @@ jobs:
       id: cache_kvc
       uses: actions/cache@v4
       with:
-        path: kvc_bin.cpp
-        key: kvc-bin-${{ hashFiles('kvc_bin.cpp') }}
+        path: bins/kvc.exe
+        key: kvc-bin-${{ hashFiles('bins/kvc.exe') }}
         restore-keys: |
           kvc-bin-
 
@@ -56,35 +56,31 @@ jobs:
           exit 1
         fi
 
-        # Compare hash with cached version to skip redundant updates
-        NEW_CPP=$(mktemp)
-        xxd -i -n bin_patcher "$KVC_BIN" > "$NEW_CPP"
-        echo 'constexpr auto patcherEnablearg = L"dse on";' >> "$NEW_CPP"
-        echo 'constexpr auto patcherDisablearg = L"dse off";' >> "$NEW_CPP"
+        mkdir -p bins
 
-        if [[ -f kvc_bin.cpp ]]; then
-          OLD_HASH=$(sha256sum kvc_bin.cpp | cut -d' ' -f1)
-          NEW_HASH=$(sha256sum "$NEW_CPP" | cut -d' ' -f1)
+        # Compare hash with cached version to skip redundant updates
+        if [[ -f bins/kvc.exe ]]; then
+          OLD_HASH=$(sha256sum bins/kvc.exe | cut -d' ' -f1)
+          NEW_HASH=$(sha256sum "$KVC_BIN" | cut -d' ' -f1)
           if [[ "$OLD_HASH" == "$NEW_HASH" ]]; then
-            echo "kvc_bin.cpp unchanged (hash match), skipping update."
+            echo "kvc.exe unchanged (hash match), skipping update."
             echo "kvc_changed=false" >> $GITHUB_OUTPUT
-            rm -f "$NEW_CPP"
             exit 0
           fi
         fi
 
-        mv "$NEW_CPP" kvc_bin.cpp
-        echo "kvc_bin.cpp updated from upstream ($(wc -l < kvc_bin.cpp) lines)"
+        cp "$KVC_BIN" bins/kvc.exe
+        echo "kvc.exe updated from upstream"
         echo "kvc_changed=true" >> $GITHUB_OUTPUT
 
     - name: kvc source report
       run: |
         if [[ "${{ steps.fetch_kvc.outcome }}" == "success" ]]; then
           echo "Using upstream kvc binary for build."
-        elif [[ -f kvc_bin.cpp ]]; then
-          echo "Upstream fetch failed, using existing kvc_bin.cpp from repo."
+        elif [[ -f bins/kvc.exe ]]; then
+          echo "Upstream fetch failed, using existing bins/kvc.exe from repo."
         else
-          echo "::error::No kvc_bin.cpp available and upstream fetch failed. Aborting."
+          echo "::error::No bins/kvc.exe available and upstream fetch failed. Aborting."
           exit 1
         fi
 
@@ -92,8 +88,8 @@ jobs:
       id: cache_drvloader
       uses: actions/cache@v4
       with:
-        path: drvloader_bin.cpp
-        key: drvloader-bin-${{ hashFiles('drvloader_bin.cpp') }}
+        path: bins/drvloader.exe
+        key: drvloader-bin-${{ hashFiles('bins/drvloader.exe') }}
         restore-keys: |
           drvloader-bin-
 
@@ -108,35 +104,32 @@ jobs:
         curl -fsSL -o drvloader.exe \
           "https://github.com/SouNobbao/drvloader-fork/releases/latest/download/drvloader.exe"
 
-        # Compare hash with cached version to skip redundant updates
-        NEW_CPP=$(mktemp)
-        xxd -i -n bin_patcher drvloader.exe > "$NEW_CPP"
-        echo 'constexpr auto patcherEnablearg = L"restore";' >> "$NEW_CPP"
-        echo 'constexpr auto patcherDisablearg = L"bypass";' >> "$NEW_CPP"
+        mkdir -p bins
 
-        if [[ -f drvloader_bin.cpp ]]; then
-          OLD_HASH=$(sha256sum drvloader_bin.cpp | cut -d' ' -f1)
-          NEW_HASH=$(sha256sum "$NEW_CPP" | cut -d' ' -f1)
+        # Compare hash with cached version to skip redundant updates
+        if [[ -f bins/drvloader.exe ]]; then
+          OLD_HASH=$(sha256sum bins/drvloader.exe | cut -d' ' -f1)
+          NEW_HASH=$(sha256sum drvloader.exe | cut -d' ' -f1)
           if [[ "$OLD_HASH" == "$NEW_HASH" ]]; then
-            echo "drvloader_bin.cpp unchanged (hash match), skipping update."
+            echo "drvloader.exe unchanged (hash match), skipping update."
             echo "drvloader_changed=false" >> $GITHUB_OUTPUT
-            rm -f "$NEW_CPP"
+            rm -f drvloader.exe
             exit 0
           fi
         fi
 
-        mv "$NEW_CPP" drvloader_bin.cpp
-        echo "drvloader_bin.cpp updated from upstream ($(wc -l < drvloader_bin.cpp) lines)"
+        mv drvloader.exe bins/drvloader.exe
+        echo "drvloader.exe updated from upstream"
         echo "drvloader_changed=true" >> $GITHUB_OUTPUT
 
     - name: drvloader source report
       run: |
         if [[ "${{ steps.fetch_drvloader.outcome }}" == "success" ]]; then
           echo "Using upstream drvloader binary for build."
-        elif [[ -f drvloader_bin.cpp ]]; then
-          echo "Upstream fetch failed, using existing drvloader_bin.cpp from repo."
+        elif [[ -f bins/drvloader.exe ]]; then
+          echo "Upstream fetch failed, using existing bins/drvloader.exe from repo."
         else
-          echo "::error::No drvloader_bin.cpp available and upstream fetch failed. Aborting."
+          echo "::error::No bins/drvloader.exe available and upstream fetch failed. Aborting."
           exit 1
         fi
 
