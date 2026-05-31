@@ -1,4 +1,5 @@
 #include "pefile.h"
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -94,7 +95,9 @@ int main(int argc, char *argv[]) {
 	}
 
 	PEFile pe(argv[1]);
-	pe.addImport(argv[2], functionNames.data(), static_cast<int>(functionNames.size()));
+	std::string importName = std::filesystem::path(argv[2]).filename().string();
+	pe.addImport(const_cast<char *>(importName.c_str()), functionNames.data(),
+			 static_cast<int>(functionNames.size()));
 
 	std::string outPath = argv[1];
 	std::string::size_type sepPos = outPath.find_last_of("\\/");
