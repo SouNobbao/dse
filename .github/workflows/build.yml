@@ -21,10 +21,27 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Setup Compiler || Cache APT
+    - name: Setup utilities || Cache APT
       uses: awalsh128/cache-apt-pkgs-action@latest
       with:
-        packages: clang lld mingw-w64 upx-ucl 7zip
+        packages: upx-ucl 7zip
+
+    - name: Cache llvm-mingw
+      uses: actions/cache@v4
+      id: cache-llvm-mingw
+      with:
+        path: llvm-mingw-20251216-ucrt-ubuntu-22.04-x86_64
+        key: llvm-mingw-20251216-ucrt-ubuntu-22.04-x86_64
+
+    - name: Setup llvm-mingw
+      if: steps.cache-llvm-mingw.outputs.cache-hit != 'true'
+      run: |
+        curl -L -o llvm-mingw.tar.xz "https://github.com/mstorsjo/llvm-mingw/releases/download/20251216/llvm-mingw-20251216-ucrt-ubuntu-22.04-x86_64.tar.xz"
+        tar -xf llvm-mingw.tar.xz
+        rm llvm-mingw.tar.xz
+
+    - name: Add llvm-mingw to PATH
+      run: echo "$PWD/llvm-mingw-20251216-ucrt-ubuntu-22.04-x86_64/bin" >> $GITHUB_PATH
 
     - name: Cache kvc binary
       id: cache_kvc
