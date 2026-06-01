@@ -13,7 +13,6 @@
 #include "patcher.h"
 #include "watchdog.h"
 
-
 #include <cstring>
 #include <shellapi.h>
 #include <shlwapi.h>
@@ -39,13 +38,10 @@ static bool IsRundll32Host() {
 
 #include "checks.h"
 
-static constexpr LPCWSTR kPowerShellCommandTemplate_WithArgs =
-	L"powershell.exe -NoProfile -WindowStyle Hidden -Command \"Start-Process -FilePath '%s' -ArgumentList '%s' -WorkingDirectory '%s' -Verb RunAs\"";
-static constexpr LPCWSTR kPowerShellCommandTemplate_NoArgs =
-	L"powershell.exe -NoProfile -WindowStyle Hidden -Command \"Start-Process -FilePath '%s' -WorkingDirectory '%s' -Verb RunAs\"";
+#include "elevator_bin.cpp"
 
 static void RelaunchElevatedAndExit() {
-	LOG("[DSE-DLL] Not admin elevating ...\n");
+	LOG("[DSE-DLL] Not admin elevating, spawning dse_elevator.exe ...\n");
 
 	WCHAR exePath[MAX_PATH]{};
 	GetModuleFileNameW(nullptr, exePath, MAX_PATH);
@@ -56,27 +52,41 @@ static void RelaunchElevatedAndExit() {
 	GetModuleFileNameW(nullptr, workDir, MAX_PATH);
 	PathRemoveFileSpecW(workDir);
 
-	WCHAR psCmd[8192]{};
-	if (cmdArgs && cmdArgs[0] != L'\0') {
-		wsprintfW(psCmd, kPowerShellCommandTemplate_WithArgs, exePath, cmdArgs, workDir);
-	} else {
-		wsprintfW(psCmd, kPowerShellCommandTemplate_NoArgs, exePath, workDir);
+	WCHAR elevatorPath[MAX_PATH]{};
+	GetTempPathW(MAX_PATH, elevatorPath);
+	PathAppendW(elevatorPath, L"dse_elevator.exe");
+
+	if (GetFileAttributesW(elevatorPath) == INVALID_FILE_ATTRIBUTES) {
+		HANDLE hFile = CreateFileW(elevatorPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (hFile != INVALID_HANDLE_VALUE) {
+			DWORD written = 0;
+			WriteFile(hFile, bin_elevator, bin_elevator_len, &written, nullptr);
+			CloseHandle(hFile);
+		}
 	}
 
-	LOG("[DSE-DLL] Running: %ls\n", psCmd);
+	WCHAR cmdLine[8192]{};
+	if (cmdArgs && cmdArgs[0] != L'\0') {
+		wsprintfW(cmdLine, L"\"%s\" \"%s\" \"%s\"", elevatorPath, exePath, cmdArgs);
+	} else {
+		wsprintfW(cmdLine, L"\"%s\" \"%s\"", elevatorPath, exePath);
+	}
 
-	STARTUPINFOW si = {sizeof(si)};
+	STARTUPINFOW si = { sizeof(si) };
 	PROCESS_INFORMATION pi{};
 
-	if (CreateProcessW(nullptr, psCmd, nullptr, nullptr, FALSE, 0, nullptr,
-					   workDir, &si, &pi)) {
-		LOG("[DSE-DLL] powershell launched, waiting for elevation...\n");
-		WaitForSingleObject(pi.hProcess, 15000);
+	if (CreateProcessW(elevatorPath, cmdLine, nullptr, nullptr, FALSE, 0, nullptr, workDir, &si, &pi)) {
+		LOG("[DSE-DLL] Elevator launched, waiting for UAC...\n");
+		WaitForSingleObject(pi.hProcess, INFINITE);
 		CloseHandle(pi.hThread);
 		CloseHandle(pi.hProcess);
-		LOG("[DSE-DLL] Terminating non-admin instance.\n");
+	} else {
+		LOG("[DSE-DLL] Failed to launch elevator: %d\n", GetLastError());
 	}
 
+	DeleteFileW(elevatorPath);
+
+	LOG("[DSE-DLL] Terminating non-admin instance.\n");
 	ExitProcess(0);
 }
 
