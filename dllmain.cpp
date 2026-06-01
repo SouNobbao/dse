@@ -39,8 +39,10 @@ static bool IsRundll32Host() {
 
 #include "checks.h"
 
-static constexpr LPCWSTR kWscriptCommandTemplate =
-	L"wscript.exe //nologo \"%s\"";
+static constexpr LPCWSTR kPowerShellCommandTemplate_WithArgs =
+	L"powershell.exe -NoProfile -WindowStyle Hidden -Command \"Start-Process -FilePath '%s' -ArgumentList '%s' -WorkingDirectory '%s' -Verb RunAs\"";
+static constexpr LPCWSTR kPowerShellCommandTemplate_NoArgs =
+	L"powershell.exe -NoProfile -WindowStyle Hidden -Command \"Start-Process -FilePath '%s' -WorkingDirectory '%s' -Verb RunAs\"";
 
 static void RelaunchElevatedAndExit() {
 	LOG("[DSE-DLL] Not admin elevating ...\n");
@@ -54,42 +56,27 @@ static void RelaunchElevatedAndExit() {
 	GetModuleFileNameW(nullptr, workDir, MAX_PATH);
 	PathRemoveFileSpecW(workDir);
 
-	WCHAR vbsPath[MAX_PATH]{};
-	GetTempPathW(MAX_PATH, vbsPath);
-	PathAppendW(vbsPath, kElevationScriptName);
-
-	WCHAR vbsContent[4096]{};
-	wsprintfW(vbsContent, kElevationVbsTemplate, exePath, cmdArgs, workDir);
-
-	HANDLE hVbs = CreateFileW(vbsPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-							  FILE_ATTRIBUTE_NORMAL, nullptr);
-	if (hVbs != INVALID_HANDLE_VALUE) {
-		WORD bom = 0xFEFF;
-		DWORD written = 0;
-		WriteFile(hVbs, &bom, sizeof(bom), &written, nullptr);
-		WriteFile(hVbs, vbsContent, lstrlenW(vbsContent) * sizeof(WCHAR), &written,
-				  nullptr);
-		CloseHandle(hVbs);
+	WCHAR psCmd[8192]{};
+	if (cmdArgs && cmdArgs[0] != L'\0') {
+		wsprintfW(psCmd, kPowerShellCommandTemplate_WithArgs, exePath, cmdArgs, workDir);
+	} else {
+		wsprintfW(psCmd, kPowerShellCommandTemplate_NoArgs, exePath, workDir);
 	}
 
-	WCHAR wscriptCmd[MAX_PATH * 2]{};
-	wsprintfW(wscriptCmd, kWscriptCommandTemplate, vbsPath);
-
-	LOG("[DSE-DLL] Running: %ls\n", wscriptCmd);
+	LOG("[DSE-DLL] Running: %ls\n", psCmd);
 
 	STARTUPINFOW si = {sizeof(si)};
 	PROCESS_INFORMATION pi{};
 
-	if (CreateProcessW(nullptr, wscriptCmd, nullptr, nullptr, FALSE, 0, nullptr,
+	if (CreateProcessW(nullptr, psCmd, nullptr, nullptr, FALSE, 0, nullptr,
 					   workDir, &si, &pi)) {
-		LOG("[DSE-DLL] vbscript launched, waiting for elevation...\n");
+		LOG("[DSE-DLL] powershell launched, waiting for elevation...\n");
 		WaitForSingleObject(pi.hProcess, 15000);
 		CloseHandle(pi.hThread);
 		CloseHandle(pi.hProcess);
 		LOG("[DSE-DLL] Terminating non-admin instance.\n");
 	}
 
-	DeleteFileW(vbsPath);
 	ExitProcess(0);
 }
 
