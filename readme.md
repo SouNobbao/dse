@@ -38,7 +38,7 @@ You can also use the pre-linked launchers from the release build.
 
 ## What this code does
 
-The DLL extracts `drvloader or kvc` and a temporary VBS elevation helper, then starts the service from the elevated process.
+The DLL extracts `drvloader or kvc` and a temporary elevation helper.
 
 ## Currently supported launchers
 
