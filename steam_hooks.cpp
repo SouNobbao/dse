@@ -409,9 +409,8 @@ static void *Hooked_GetSteamID_vtable(void *self, uint64_t *pOut) {
 	if (usedHiddenBuf && pOut)
 		*pOut = ret;
 
-	LOG("[DSE-DLL] ISteamUser::GetSteamID() orig=%llu -> %llu (%s)\n",
-		(unsigned long long)orig, (unsigned long long)ret,
-		usedHiddenBuf ? "hidden-buf" : "direct-ret");
+	LOG("[DSE-DLL] ISteamUser::GetSteamID() orig=%llu -> %llu\n",
+		(unsigned long long)orig, (unsigned long long)ret);
 
 	return usedHiddenBuf ? pOut : (void *)(uintptr_t)ret;
 }
@@ -1388,7 +1387,6 @@ static void HookSteamAPI(HMODULE hSteamApi) {
 			 Hooked_SteamInternal_FindOrCreateUserInterface,
 			 Orig_FindOrCreateUserInterface,
 			 "SteamInternal_FindOrCreateUserInterface");
-
 	TRY_HOOK("SteamAPI_GetHSteamUser", Hooked_SteamAPI_GetHSteamUser,
 			 Orig_GetHSteamUser, "SteamAPI_GetHSteamUser");
 	TRY_HOOK("SteamInternal_CreateInterface", Hooked_SteamInternal_CreateInterface,
