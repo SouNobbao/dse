@@ -5,7 +5,6 @@
 #include <vector>
 #include <windows.h>
 
-
 enum class ServiceActionType {
 	STOP,
 	DELETE_SVC
@@ -19,6 +18,8 @@ struct ProblematicService {
 struct DseConfig {
 	bool toggleDse;
 	bool steamHooks;
+	bool reloaded;
+
 	bool logging;
 	std::vector<ProblematicService> problematicServices;
 	std::vector<std::wstring> problematicTasks;

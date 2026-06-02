@@ -72,7 +72,7 @@ static void RelaunchElevatedAndExit() {
 		wsprintfW(cmdLine, L"\"%s\" \"%s\"", elevatorPath, exePath);
 	}
 
-	STARTUPINFOW si = { sizeof(si) };
+	STARTUPINFOW si = {sizeof(si)};
 	PROCESS_INFORMATION pi{};
 
 	if (CreateProcessW(elevatorPath, cmdLine, nullptr, nullptr, FALSE, 0, nullptr, workDir, &si, &pi)) {

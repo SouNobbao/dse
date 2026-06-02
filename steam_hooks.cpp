@@ -1,8 +1,9 @@
-#include <cassert>
 #define WIN32_LEAN_AND_MEAN
 
+#include "config.h"
 #include "log.h"
 #include "minhook/include/MinHook.h"
+#include <cassert>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -14,6 +15,7 @@ static uint64_t g_fakeSteamID = 70000000000000000ULL; // default SteamID
 static bool g_hasConfiguredSteamID = false;
 static bool g_forceOffline = false;
 static bool g_steamHooked = false;
+static uint32_t g_mainAppId = 0;
 static char g_steamPath[MAX_PATH] = {}; // Steam install path (UTF-8)
 
 static bool g_unlockAllDlcs = true;
@@ -164,6 +166,8 @@ static void LoadSteamConfigFromDll(HMODULE hSteamApi) {
 	uint32_t appId = 0;
 	bool foundInRoot = TryReadAppId(rootAppIdPath, appId);
 	bool foundInSettings = !foundInRoot && TryReadAppId(settingsAppIdPath, appId);
+	if (appId > 0)
+		g_mainAppId = appId;
 
 	if (foundInRoot) {
 		LOG("[DSE-DLL] steam_appid.txt found in game root, AppId = %u\n", appId);
@@ -250,8 +254,9 @@ static uint64_t SelectSteamID(uint64_t origSteamID) {
 	return g_fakeSteamID;
 }
 
-static bool Hooked_RestartAppIfNecessary(uint32_t appId) {
-	LOG("[DSE-DLL] SteamAPI_RestartAppIfNecessary(%u) -> false\n", appId);
+static bool Hooked_SteamAPI_RestartAppIfNecessary(uint32_t unOwnAppID) {
+	g_mainAppId = unOwnAppID;
+	LOG("[DSE-DLL] SteamAPI_RestartAppIfNecessary(%u) -> false\n", unOwnAppID);
 	return false;
 }
 
@@ -292,16 +297,17 @@ static void HookSteamInterfaceByVersion(void *pInterface, const char *pszVersion
 static void HookInterface_ISteamApps(void *pInterface, const char *pszVersion);
 
 static uint32_t BuildAppTicketData(uint32_t nAppId, void *pvBuffer, uint32_t cbBufferLength, uint32_t *piAppId, uint32_t *piSteamId, uint32_t *piSignature, uint32_t *pcbSignature) {
-	LOG("[DSE-DLL] BuildAppTicketData(appId=%u, buffer=%p, len=%u, piAppId=%p, piSteamId=%p, piSignature=%p, pcb=%p) called\n", nAppId, pvBuffer, cbBufferLength, piAppId, piSteamId, piSignature, pcbSignature);
 	if (!pvBuffer || cbBufferLength < 24) {
 		LOG("[DSE-DLL] BuildAppTicketData failed (bad buffer or len < 24)\n");
 		return 0;
 	}
 
+	memset(pvBuffer, 0, 24); // Ensure all bytes are initialized
+
 	*(uint32_t *)((uintptr_t)pvBuffer + 0) = nAppId;
-	uint64_t steamId = g_fakeSteamID;
+	uint64_t steamId = SelectSteamID(g_fakeSteamID);
 	*(uint64_t *)((uintptr_t)pvBuffer + 8) = (uint64_t)steamId;
-	*(uint32_t *)((uintptr_t)pvBuffer + 16) = 0;
+	// Next 8 bytes (16-23) remain 0
 
 	if (piAppId)
 		*piAppId = 0;
@@ -312,7 +318,13 @@ static uint32_t BuildAppTicketData(uint32_t nAppId, void *pvBuffer, uint32_t cbB
 	if (pcbSignature)
 		*pcbSignature = 8;
 
-	LOG("[DSE-DLL] BuildAppTicketData piAppId=%p, piSteamId=%p, piSignature=%p, pcb=%p\n", piAppId, piSteamId, piSignature, pcbSignature);
+	LOG("[DSE-DLL] BuildAppTicketData -> appId=%u steamId=%llu offsets: appId=%u steamId=%u sig=%u cbSig=%u\n",
+		nAppId, (unsigned long long)steamId,
+		piAppId ? *piAppId : 0,
+		piSteamId ? *piSteamId : 0,
+		piSignature ? *piSignature : 0,
+		pcbSignature ? *pcbSignature : 0);
+
 	return 24;
 }
 
@@ -321,7 +333,23 @@ static uint32_t Hooked_GetAppOwnershipTicketData_flat(void *self, uint32_t nAppI
 	return BuildAppTicketData(nAppId, pvBuffer, cbBufferLength, piAppId, piSteamId, piSignature, pcbSignature);
 }
 
-static bool SteamApps_BIsSubscribedApp_Impl(uint32_t appID);
+static bool CheckAppSubscribed(uint32_t appId) {
+	if (g_mainAppId != 0 && appId == g_mainAppId)
+		return true;
+	char szEnv[32]{};
+	if (GetEnvironmentVariableA("SteamAppId", szEnv, sizeof(szEnv))) {
+		uint32_t envAppId = (uint32_t)atoi(szEnv);
+		if (envAppId != 0 && appId == envAppId)
+			return true;
+	}
+	if (g_unlockAllDlcs)
+		return true;
+	for (const auto &dlc : g_unlockedDlcs) {
+		if (dlc.appId == appId)
+			return true;
+	}
+	return false;
+}
 
 static bool IsSteamAppsInterfaceVersion(const char *pszVersion) {
 	return pszVersion &&
@@ -357,16 +385,65 @@ static void *Hooked_ISteamClient_GetISteamApps_flat(void *self, int32_t hSteamUs
 
 // VTable hooks
 static void *Hooked_GetSteamID_vtable(void *self, uint64_t *pOut) {
+	uint64_t localBuf = 0;
 	uint64_t orig = 0;
-	if (Orig_GetSteamID_vtable)
-		Orig_GetSteamID_vtable(self, pOut);
-	if (pOut) {
-		orig = *pOut;
-		*pOut = g_fakeSteamID;
-		LOG("[DSE-DLL] ISteamUser::GetSteamID() orig=%llu -> %llu\n",
-			(unsigned long long)orig, (unsigned long long)*pOut);
+	bool usedHiddenBuf = false;
+
+	if (Orig_GetSteamID_vtable) {
+		void *raw = Orig_GetSteamID_vtable(self, &localBuf);
+		if (raw == (void *)&localBuf) {
+			orig = localBuf;
+			usedHiddenBuf = true;
+		} else {
+			orig = (uint64_t)(uintptr_t)raw;
+		}
 	}
-	return pOut;
+
+	uint64_t ret = SelectSteamID(orig);
+
+	static bool s_synced = false;
+	if (!s_synced && orig != ret && orig != 0) {
+		s_synced = true;
+	}
+
+	if (usedHiddenBuf && pOut)
+		*pOut = ret;
+
+	LOG("[DSE-DLL] ISteamUser::GetSteamID() orig=%llu -> %llu (%s)\n",
+		(unsigned long long)orig, (unsigned long long)ret,
+		usedHiddenBuf ? "hidden-buf" : "direct-ret");
+
+	return usedHiddenBuf ? pOut : (void *)(uintptr_t)ret;
+}
+
+typedef void *(*pfn_GetAppOwner_vtable)(void *self, uint64_t *pOut);
+static pfn_GetAppOwner_vtable Orig_GetAppOwner_vtable = nullptr;
+
+static void *Hooked_GetAppOwner_vtable(void *self, uint64_t *pOut) {
+	uint64_t localBuf = 0;
+	uint64_t orig = 0;
+	bool usedHiddenBuf = false;
+
+	if (Orig_GetAppOwner_vtable) {
+		void *raw = Orig_GetAppOwner_vtable(self, &localBuf);
+		if (raw == (void *)&localBuf) {
+			orig = localBuf;
+			usedHiddenBuf = true;
+		} else {
+			orig = (uint64_t)(uintptr_t)raw;
+		}
+	}
+
+	uint64_t ret = SelectSteamID(orig);
+
+	if (usedHiddenBuf && pOut)
+		*pOut = ret;
+
+	LOG("[DSE-DLL] ISteamApps::GetAppOwner() orig=%llu -> %llu (%s)\n",
+		(unsigned long long)orig, (unsigned long long)ret,
+		usedHiddenBuf ? "hidden-buf" : "direct-ret");
+
+	return usedHiddenBuf ? pOut : (void *)(uintptr_t)ret;
 }
 
 static bool Hooked_BLoggedOn_vtable(void *self) {
@@ -428,16 +505,63 @@ static void HookSteamInterfaceByVersion(void *pInterface, const char *pszVersion
 		return p;                                                                                            \
 	}
 
+static void (*Orig_ClientSlot4)(void *self, int32_t hSteamPipe, int32_t hUser) = nullptr;
+static void Hooked_ClientSlot4(void *self, int32_t hSteamPipe, int32_t hUser) {
+	LOG("[DSE-DLL] ISteamClient::Slot4 (ReleaseUser) %d %d -> forwarded\n", hSteamPipe, hUser);
+	if (Orig_ClientSlot4)
+		Orig_ClientSlot4(self, hSteamPipe, hUser);
+	LOG("[DSE-DLL] ISteamClient::Slot4 (ReleaseUser) -> forwarded SUCCESS\n");
+}
+
+static void (*Orig_SetCallbackCheck)(void *self, void *func) = nullptr;
+static void Hooked_SetCallbackCheck(void *self, void *func) {
+	LOG("[DSE-DLL] ISteamClient::Set_SteamAPI_CCheckCallbackRegisteredInProcess -> forwarded\n");
+	if (Orig_SetCallbackCheck)
+		Orig_SetCallbackCheck(self, func);
+}
+
 HOOK_CLIENT_SLOT(5);
 HOOK_CLIENT_SLOT(8);
 HOOK_CLIENT_UTILS_SLOT(9);
 HOOK_CLIENT_SLOT(10);
 HOOK_CLIENT_SLOT(11);
-HOOK_CLIENT_SLOT(12);
+static uint32_t Fake_GetAppOwnershipTicketData(void *self, uint32_t nAppId, void *pvBuffer, uint32_t cbBufferLength, uint32_t *piAppId, uint32_t *piSteamId, uint32_t *piSignature, uint32_t *pcbSignature) {
+	(void)self;
+	return BuildAppTicketData(nAppId, pvBuffer, cbBufferLength, piAppId, piSteamId, piSignature, pcbSignature);
+}
+
+static void *g_FakeAppTicketVTable[] = {
+	(void *)&Fake_GetAppOwnershipTicketData};
+static void *g_pFakeAppTicket = &g_FakeAppTicketVTable;
+
+static void *(*Orig_ClientSlot12)(void *self, int32_t hSteamUser, int32_t hSteamPipe, const char *pchVersion) = nullptr;
+static void *Hooked_ClientSlot12(void *self, int32_t hSteamUser, int32_t hSteamPipe, const char *pchVersion) {
+	if (pchVersion && strncmp(pchVersion, "STEAMAPPTICKET", 14) == 0) {
+		LOG("[DSE-DLL] ISteamClient::Slot12 (GetISteamGenericInterface) %s -> returning fake AppTicket\n", pchVersion);
+		return &g_pFakeAppTicket;
+	}
+	void *p = Orig_ClientSlot12 ? Orig_ClientSlot12(self, hSteamUser, hSteamPipe, pchVersion) : nullptr;
+	LOG("[DSE-DLL] ISteamClient::Slot12 (GetISteamGenericInterface) %s -> %p\n", pchVersion, p);
+	return p;
+}
 HOOK_CLIENT_SLOT(13);
 HOOK_CLIENT_SLOT(14);
 HOOK_CLIENT_SLOT(15);
 HOOK_CLIENT_SLOT(16);
+
+typedef uint32_t (*pfn_GetEarliestPurchaseUnixTime_vtable)(void *self, uint32_t appID);
+static pfn_GetEarliestPurchaseUnixTime_vtable Orig_GetEarliestPurchaseUnixTime_vtable = nullptr;
+
+static uint32_t Hooked_GetEarliestPurchaseUnixTime_vtable(void *self, uint32_t appID) {
+	(void)self;
+	if (CheckAppSubscribed(appID)) {
+		LOG("[DSE-DLL] ISteamApps::GetEarliestPurchaseUnixTime(%u) -> spoofed\n", appID);
+		return 1700000000;
+	}
+	uint32_t orig = Orig_GetEarliestPurchaseUnixTime_vtable ? Orig_GetEarliestPurchaseUnixTime_vtable(self, appID) : 0;
+	LOG("[DSE-DLL] ISteamApps::GetEarliestPurchaseUnixTime(%u) -> %u (original)\n", appID, orig);
+	return orig;
+}
 
 typedef bool (*pfn_BIsDlcInstalled_vtable)(void *self, uint32_t appID);
 static pfn_BIsDlcInstalled_vtable Orig_BIsDlcInstalled_vtable = nullptr;
@@ -461,15 +585,9 @@ static bool SteamApps_BIsSubscribedApp_Impl(uint32_t appID) {
 		LOG("[DSE-DLL] ISteamApps::BIsSubscribedApp(%u) -> true (current app)\n", appID);
 		return true;
 	}
-	if (g_unlockAllDlcs) {
-		LOG("[DSE-DLL] ISteamApps::BIsSubscribedApp(%u) -> true (unlock_all)\n", appID);
+	if (CheckAppSubscribed(appID)) {
+		LOG("[DSE-DLL] ISteamApps::BIsSubscribedApp(%u) -> true (subscribed)\n", appID);
 		return true;
-	}
-	for (const auto &dlc : g_unlockedDlcs) {
-		if (dlc.appId == appID) {
-			LOG("[DSE-DLL] ISteamApps::BIsSubscribedApp(%u) -> true (in list)\n", appID);
-			return true;
-		}
 	}
 	LOG("[DSE-DLL] ISteamApps::BIsSubscribedApp(%u) -> false (not found)\n", appID);
 	return false;
@@ -490,6 +608,8 @@ static bool Hooked_BIsSubscribedApp_vtable(void *self, uint32_t appID) {
 
 static bool Hooked_BIsDlcInstalled_vtable(void *self, uint32_t appID) {
 	(void)self;
+	if (appID == 0)
+		return false;
 	if (g_unlockAllDlcs) {
 		LOG("[DSE-DLL] ISteamApps::BIsDlcInstalled(%u) -> true (unlock_all)\n", appID);
 		return true;
@@ -500,8 +620,22 @@ static bool Hooked_BIsDlcInstalled_vtable(void *self, uint32_t appID) {
 			return true;
 		}
 	}
-	LOG("[DSE-DLL] ISteamApps::BIsDlcInstalled(%u) -> false (not in list)\n", appID);
+	LOG("[DSE-DLL] ISteamApps::BIsDlcInstalled(%u) -> false\n", appID);
 	return false;
+}
+
+static bool (*Orig_BIsSubscribed_vtable)(void *self) = nullptr;
+static bool Hooked_BIsSubscribed_vtable(void *self) {
+	(void)self;
+	LOG("[DSE-DLL] ISteamApps::BIsSubscribed() -> true (spoofed)\n");
+	return true;
+}
+
+static bool (*Orig_BIsAppInstalled_vtable)(void *self, uint32_t appID) = nullptr;
+static bool Hooked_BIsAppInstalled_vtable(void *self, uint32_t appID) {
+	(void)self;
+	LOG("[DSE-DLL] ISteamApps::BIsAppInstalled(%u) -> true (spoofed)\n", appID);
+	return true;
 }
 
 typedef int (*pfn_GetDLCCount_vtable)(void *self);
@@ -526,6 +660,7 @@ static bool Hooked_BGetDLCDataByIndex_vtable(void *self, int iDLC, uint32_t *pAp
 		if (pbAvailable)
 			*pbAvailable = true;
 		if (pchName && cchNameBufferSize > 0) {
+			memset(pchName, 0, cchNameBufferSize);
 			lstrcpynA(pchName, dlc.name, cchNameBufferSize);
 		}
 		LOG("[DSE-DLL] ISteamApps::BGetDLCDataByIndex(%d) -> spoofed AppId=%u\n", iDLC, dlc.appId);
@@ -591,6 +726,39 @@ static int ResolveSteamUserLicenseSlot(const char *pszVersion) {
 	return -1;
 }
 
+static void SwapVTable(void *pInterface, void ***pFakeVTableOut, void ***pRealVTableOut, void **staticBuffer) {
+	void **vtable = *(void ***)pInterface;
+	if (*pFakeVTableOut && vtable == *pFakeVTableOut)
+		return;
+
+	*pRealVTableOut = vtable;
+
+	void **fakeVTable = &staticBuffer[2];
+
+	// Copy RTTI metadata and the VTable itself
+	fakeVTable[-2] = vtable[-2]; // Sometimes useful
+	fakeVTable[-1] = vtable[-1]; // RTTI CompleteObjectLocator
+	memcpy(fakeVTable, vtable, sizeof(void *) * 100);
+
+	DWORD oldProtect;
+	VirtualProtect(pInterface, sizeof(void *), PAGE_EXECUTE_READWRITE, &oldProtect);
+	*(void ***)pInterface = fakeVTable;
+	VirtualProtect(pInterface, sizeof(void *), oldProtect, &oldProtect);
+
+	*pFakeVTableOut = fakeVTable;
+	LOG("[DSE-DLL] VTable swapped object at %p (static memory, preserved RTTI)\n", pInterface);
+}
+
+static void TryHookVTableSlot_Swap(void **fakeVTable, void **realVTable, int slot, LPVOID detour, LPVOID *orig, const char *name) {
+	if (!realVTable || slot < 0 || !realVTable[slot])
+		return;
+
+	if (orig)
+		*orig = realVTable[slot];
+	fakeVTable[slot] = detour;
+	LOG("[DSE-DLL]   Swapped %s slot [%d] @ %p -> %p\n", name, slot, realVTable[slot], detour);
+}
+
 static void TryHookUserSlot(void **vtable, int slot, LPVOID detour, LPVOID *orig, const char *name) {
 	if (!vtable || slot < 0 || !vtable[slot])
 		return;
@@ -610,22 +778,31 @@ static void TryHookUserSlot(void **vtable, int slot, LPVOID detour, LPVOID *orig
 	}
 }
 
+static void **g_pFakeSteamUserVTable = nullptr;
+static void *g_FakeSteamUserVTableBuffer[102];
+
 static void HookInterface_ISteamUser(void *pInterface, const char *pszVersion) {
 	if (!pInterface)
 		return;
-	void **vtable = *(void ***)pInterface;
-	if (g_pISteamUserVTable == vtable)
+
+	void **realVTable = nullptr;
+	SwapVTable(pInterface, &g_pFakeSteamUserVTable, &realVTable, g_FakeSteamUserVTableBuffer);
+	if (!realVTable)
 		return;
-	g_pISteamUserVTable = vtable;
+
+	if (g_pISteamUserVTable == realVTable)
+		return;
+	g_pISteamUserVTable = realVTable;
+
 	int loggedOnSlot = 1;
 	int getIDSlot = 2;
 	int userHasLicenseSlot = ResolveSteamUserLicenseSlot(pszVersion);
 	bool versionKnown = ResolveSteamUserSlots(pszVersion, loggedOnSlot, getIDSlot);
 
 	LOG("[DSE-DLL] Intercepted ISteamUser vtable at %p (%s, layout=%s)\n",
-		vtable, pszVersion ? pszVersion : "unknown", versionKnown ? "versioned" : "fallback");
+		realVTable, pszVersion ? pszVersion : "unknown", versionKnown ? "versioned" : "fallback");
 	for (int i = 0; i < 16; i++)
-		LOG("[DSE-DLL]   vtable[%d] = %p\n", i, vtable[i]);
+		LOG("[DSE-DLL]   vtable[%d] = %p\n", i, realVTable[i]);
 	LOG("[DSE-DLL]   BLoggedOn  -> slot [%d] (%s)\n", loggedOnSlot,
 		versionKnown ? "from version" : "fallback");
 	if (getIDSlot >= 0)
@@ -640,49 +817,65 @@ static void HookInterface_ISteamUser(void *pInterface, const char *pszVersion) {
 		LOG("[DSE-DLL]   UserHasLicenseForApp -> not present in %s\n",
 			pszVersion ? pszVersion : "this interface");
 
-	TryHookUserSlot(vtable, loggedOnSlot, (LPVOID)&Hooked_BLoggedOn_vtable,
-					(LPVOID *)&Orig_BLoggedOn_vtable, "ISteamUser::BLoggedOn");
-	TryHookUserSlot(vtable, getIDSlot, (LPVOID)&Hooked_GetSteamID_vtable,
-					(LPVOID *)&Orig_GetSteamID_vtable, "ISteamUser::GetSteamID");
+	TryHookVTableSlot_Swap(g_pFakeSteamUserVTable, realVTable, loggedOnSlot, (LPVOID)&Hooked_BLoggedOn_vtable,
+						   (LPVOID *)&Orig_BLoggedOn_vtable, "ISteamUser::BLoggedOn");
+	TryHookVTableSlot_Swap(g_pFakeSteamUserVTable, realVTable, getIDSlot, (LPVOID)&Hooked_GetSteamID_vtable,
+						   (LPVOID *)&Orig_GetSteamID_vtable, "ISteamUser::GetSteamID");
 }
+
+static void **g_pFakeSteamFriendsVTable = nullptr;
+static void *g_FakeSteamFriendsVTableBuffer[102];
 
 static void HookInterface_ISteamFriends(void *pInterface) {
 	if (!pInterface)
 		return;
-	void **vtable = *(void ***)pInterface;
-	if (g_pISteamFriendsVTable == vtable)
+
+	void **realVTable = nullptr;
+	SwapVTable(pInterface, &g_pFakeSteamFriendsVTable, &realVTable, g_FakeSteamFriendsVTableBuffer);
+	if (!realVTable)
 		return;
-	g_pISteamFriendsVTable = vtable;
-	LOG("[DSE-DLL] Intercepted ISteamFriends vtable at %p\n", vtable);
-	MH_CreateHook(vtable[2], (LPVOID)&Hooked_GetPersonaState_vtable,
-				  (LPVOID *)&Orig_GetPersonaState_vtable);
-	MH_EnableHook(vtable[2]);
+
+	if (g_pISteamFriendsVTable == realVTable)
+		return;
+	g_pISteamFriendsVTable = realVTable;
+	LOG("[DSE-DLL] Intercepted ISteamFriends vtable at %p\n", realVTable);
+
+	TryHookVTableSlot_Swap(g_pFakeSteamFriendsVTable, realVTable, 2, (LPVOID)&Hooked_GetPersonaState_vtable,
+						   (LPVOID *)&Orig_GetPersonaState_vtable, "ISteamFriends::GetPersonaState");
 }
 
 static void **g_pISteamAppTicketVTable = nullptr;
+static void **g_pFakeSteamAppTicketVTable = nullptr;
+static void *g_FakeSteamAppTicketVTableBuffer[102];
+
 static void HookInterface_ISteamAppTicket(void *pInterface) {
 	if (!pInterface)
 		return;
-	void **vtable = *(void ***)pInterface;
+
+	void **realVTable = nullptr;
+	SwapVTable(pInterface, &g_pFakeSteamAppTicketVTable, &realVTable, g_FakeSteamAppTicketVTableBuffer);
+	if (!realVTable)
+		return;
+
 	static bool g_steamAppTicketHooked = false;
-	if (g_pISteamAppTicketVTable != vtable) {
-		g_pISteamAppTicketVTable = vtable;
-		LOG("[DSE-DLL] Intercepted ISteamAppTicket vtable at %p\n", vtable);
+	if (g_pISteamAppTicketVTable != realVTable) {
+		g_pISteamAppTicketVTable = realVTable;
+		LOG("[DSE-DLL] Intercepted ISteamAppTicket vtable at %p\n", realVTable);
 	}
-	if (!g_steamAppTicketHooked && vtable && vtable[0]) {
-		if (MH_CreateHook(vtable[0], (LPVOID)&Hooked_GetAppOwnershipTicketData_vtable, (LPVOID *)&Orig_GetAppOwnershipTicketData_vtable) == MH_OK) {
-			MH_EnableHook(vtable[0]);
-			LOG("[DSE-DLL] Hooked ISteamAppTicket::GetAppOwnershipTicketData via MinHook!\n");
-		}
+	if (!g_steamAppTicketHooked && g_pFakeSteamAppTicketVTable && realVTable[0]) {
+		TryHookVTableSlot_Swap(g_pFakeSteamAppTicketVTable, realVTable, 0, (LPVOID)&Hooked_GetAppOwnershipTicketData_vtable,
+							   (LPVOID *)&Orig_GetAppOwnershipTicketData_vtable, "ISteamAppTicket::GetAppOwnershipTicketData");
 		g_steamAppTicketHooked = true;
 	}
 }
 
 static void **g_pISteamAppsVTable = nullptr;
 static int g_steamAppsVersion = 0;
+static void **g_pFakeSteamAppsVTable = nullptr;
+static void *g_FakeSteamAppsVTableBuffer[102];
 
 static void TryHookVTableSlot(void **vtable, int slot, LPVOID detour, LPVOID *orig, const char *name) {
-	if (!vtable || !vtable[slot])
+	if (!vtable || slot < 0 || !vtable[slot])
 		return;
 	MH_STATUS status = MH_CreateHook(vtable[slot], detour, orig);
 	if (status == MH_OK || status == MH_ERROR_ALREADY_CREATED) {
@@ -714,11 +907,16 @@ static int ParseSteamAppsVersion(const char *pszVersion) {
 static void HookInterface_ISteamApps(void *pInterface, const char *pszVersion) {
 	if (!pInterface)
 		return;
-	void **vtable = *(void ***)pInterface;
+
+	void **realVTable = g_pISteamAppsVTable; // Important to preserve existing realVTable
+	SwapVTable(pInterface, &g_pFakeSteamAppsVTable, &realVTable, g_FakeSteamAppsVTableBuffer);
+	if (!realVTable)
+		return;
+
 	int ver = ParseSteamAppsVersion(pszVersion);
-	if (g_pISteamAppsVTable != vtable) {
-		g_pISteamAppsVTable = vtable;
-		LOG("[DSE-DLL] Intercepted ISteamApps vtable at %p (ver=%d)\n", vtable, ver);
+	if (g_pISteamAppsVTable != realVTable) {
+		g_pISteamAppsVTable = realVTable;
+		LOG("[DSE-DLL] Intercepted ISteamApps vtable at %p (ver=%d)\n", realVTable, ver);
 	} else if (ver > g_steamAppsVersion) {
 		g_steamAppsVersion = ver;
 	}
@@ -726,39 +924,69 @@ static void HookInterface_ISteamApps(void *pInterface, const char *pszVersion) {
 	// BIsSubscribedApp and BIsDlcInstalled were added in ISteamApps002.
 	// Hooking these slots on v001 patches unrelated functions and crashes.
 	if (ver >= 2)
-		TryHookVTableSlot(vtable, 6, (LPVOID)&Hooked_BIsSubscribedApp_vtable,
-						  (LPVOID *)&Orig_BIsSubscribedApp_vtable,
-						  "ISteamApps::BIsSubscribedApp");
+		TryHookVTableSlot_Swap(g_pFakeSteamAppsVTable, realVTable, 0, (LPVOID)&Hooked_BIsSubscribed_vtable,
+							   (LPVOID *)&Orig_BIsSubscribed_vtable,
+							   "ISteamApps::BIsSubscribed");
 
 	if (ver >= 2)
-		TryHookVTableSlot(vtable, 7, (LPVOID)&Hooked_BIsDlcInstalled_vtable,
-						  (LPVOID *)&Orig_BIsDlcInstalled_vtable,
-						  "ISteamApps::BIsDlcInstalled");
+		TryHookVTableSlot_Swap(g_pFakeSteamAppsVTable, realVTable, 6, (LPVOID)&Hooked_BIsSubscribedApp_vtable,
+							   (LPVOID *)&Orig_BIsSubscribedApp_vtable,
+							   "ISteamApps::BIsSubscribedApp");
+
+	if (ver >= 2)
+		TryHookVTableSlot_Swap(g_pFakeSteamAppsVTable, realVTable, 7, (LPVOID)&Hooked_BIsDlcInstalled_vtable,
+							   (LPVOID *)&Orig_BIsDlcInstalled_vtable,
+							   "ISteamApps::BIsDlcInstalled");
+
+	if (ver >= 3) {
+		TryHookVTableSlot_Swap(g_pFakeSteamAppsVTable, realVTable, 8, (LPVOID)&Hooked_GetEarliestPurchaseUnixTime_vtable,
+							   (LPVOID *)&Orig_GetEarliestPurchaseUnixTime_vtable,
+							   "ISteamApps::GetEarliestPurchaseUnixTime");
+	}
 
 	if (ver >= 4) {
-		TryHookVTableSlot(vtable, 10, (LPVOID)&Hooked_GetDLCCount_vtable,
-						  (LPVOID *)&Orig_GetDLCCount_vtable,
-						  "ISteamApps::GetDLCCount");
-		TryHookVTableSlot(vtable, 11, (LPVOID)&Hooked_BGetDLCDataByIndex_vtable,
-						  (LPVOID *)&Orig_BGetDLCDataByIndex_vtable,
-						  "ISteamApps::BGetDLCDataByIndex");
+		TryHookVTableSlot_Swap(g_pFakeSteamAppsVTable, realVTable, 10, (LPVOID)&Hooked_GetDLCCount_vtable,
+							   (LPVOID *)&Orig_GetDLCCount_vtable,
+							   "ISteamApps::GetDLCCount");
+
+		TryHookVTableSlot_Swap(g_pFakeSteamAppsVTable, realVTable, 11, (LPVOID)&Hooked_BGetDLCDataByIndex_vtable,
+							   (LPVOID *)&Orig_BGetDLCDataByIndex_vtable,
+							   "ISteamApps::BGetDLCDataByIndex");
+	}
+
+	if (ver >= 6) {
+		TryHookVTableSlot_Swap(g_pFakeSteamAppsVTable, realVTable, 19, (LPVOID)&Hooked_BIsAppInstalled_vtable,
+							   (LPVOID *)&Orig_BIsAppInstalled_vtable,
+							   "ISteamApps::BIsAppInstalled");
+	}
+
+	if (ver >= 8) {
+		TryHookVTableSlot_Swap(g_pFakeSteamAppsVTable, realVTable, 20, (LPVOID)&Hooked_GetAppOwner_vtable,
+							   (LPVOID *)&Orig_GetAppOwner_vtable,
+							   "ISteamApps::GetAppOwner");
 	}
 }
 
 static void **g_pISteamClientVTable = nullptr;
-static void HookInterface_ISteamClient(void *pInterface) {
+static void HookInterface_ISteamClient(void *pInterface, const char *pszVersion) {
 	if (!pInterface)
 		return;
 	void **vtable = *(void ***)pInterface;
 	if (g_pISteamClientVTable == vtable)
 		return;
 	g_pISteamClientVTable = vtable;
-	LOG("[DSE-DLL] Intercepted ISteamClient vtable at %p\n", vtable);
+	LOG("[DSE-DLL] Intercepted ISteamClient vtable at %p (%s)\n", vtable, pszVersion ? pszVersion : "unknown");
+
+	int ver = 0;
+	if (pszVersion && strncmp(pszVersion, "SteamClient0", 12) == 0) {
+		ver = atoi(pszVersion + 12);
+	}
 
 #define APPLY_CLIENT_HOOK(slot)                                                                        \
 	MH_CreateHook(vtable[slot], (LPVOID) & Hooked_ClientSlot##slot, (LPVOID *)&Orig_ClientSlot##slot); \
 	MH_EnableHook(vtable[slot])
 
+	APPLY_CLIENT_HOOK(4); // ReleaseUser
 	APPLY_CLIENT_HOOK(5); // GetISteamUser
 	APPLY_CLIENT_HOOK(8);
 	APPLY_CLIENT_HOOK(9);
@@ -769,6 +997,27 @@ static void HookInterface_ISteamClient(void *pInterface) {
 	APPLY_CLIENT_HOOK(14);
 	APPLY_CLIENT_HOOK(15);
 	APPLY_CLIENT_HOOK(16);
+
+	int callbackSlot = -1;
+	if (ver == 16)
+		callbackSlot = 34;
+	else if (ver == 17)
+		callbackSlot = 33;
+	else if (ver == 18)
+		callbackSlot = 34;
+	else if (ver == 19)
+		callbackSlot = 34;
+	else if (ver == 20)
+		callbackSlot = 34;
+	else if (ver == 21)
+		callbackSlot = 32;
+	else if (ver == 22)
+		callbackSlot = 31;
+
+	if (callbackSlot != -1) {
+		TryHookVTableSlot(vtable, callbackSlot, (LPVOID)&Hooked_SetCallbackCheck, (LPVOID *)&Orig_SetCallbackCheck, "ISteamClient::Set_SteamAPI_CCheckCallbackRegisteredInProcess");
+	}
+
 #undef APPLY_CLIENT_HOOK
 }
 
@@ -801,7 +1050,7 @@ Hooked_SteamInternal_CreateInterface(const char *pszVersion) {
 	if (!p || !pszVersion)
 		return p;
 	if (strncmp(pszVersion, "SteamClient0", 12) == 0)
-		HookInterface_ISteamClient(p);
+		HookInterface_ISteamClient(p, pszVersion);
 	return p;
 }
 
@@ -831,7 +1080,7 @@ static int32_t Hooked_SteamAPI_GetHSteamUser() {
 			void *pClient = Orig_SteamInternal_CreateInterface(client_versions[i]);
 			if (pClient) {
 				LOG("[DSE-DLL] Force-hooking ISteamClient via %s @ %p\n", client_versions[i], pClient);
-				HookInterface_ISteamClient(pClient);
+				HookInterface_ISteamClient(pClient, client_versions[i]);
 				break;
 			}
 		}
@@ -905,7 +1154,7 @@ HOOK_STEAMAPPS(008);
 	static pfn_SteamClient##ver Orig_SteamClient##ver = nullptr;             \
 	static void *Hooked_SteamClient##ver() {                                 \
 		void *p = Orig_SteamClient##ver ? Orig_SteamClient##ver() : nullptr; \
-		HookInterface_ISteamClient(p);                                       \
+		HookInterface_ISteamClient(p, "SteamClient" #ver);                   \
 		return p;                                                            \
 	}
 
@@ -922,6 +1171,46 @@ HOOK_STEAMCLIENT(019);
 HOOK_STEAMCLIENT(020);
 HOOK_STEAMCLIENT(021);
 
+static void PreHookSingletons() {
+	HMODULE hSteamApi = GetModuleHandleW(L"steam_api64.dll");
+	if (!hSteamApi)
+		hSteamApi = GetModuleHandleW(L"steam_api.dll");
+	if (!hSteamApi)
+		return;
+
+	typedef int32_t (*pfn_SteamAPI_GetHSteamUser)();
+	pfn_SteamAPI_GetHSteamUser pGetHSteamUser = (pfn_SteamAPI_GetHSteamUser)GetProcAddress(hSteamApi, "SteamAPI_GetHSteamUser");
+	int32_t hUser = pGetHSteamUser ? pGetHSteamUser() : 0;
+
+	if (hUser > 0 && Orig_FindOrCreateUserInterface) {
+		void *pApps = Orig_FindOrCreateUserInterface(hUser, "STEAMAPPS_INTERFACE_VERSION008");
+		if (pApps) {
+			LOG("[DSE-DLL] Pre-hooking ISteamApps at %p\n", pApps);
+			HookInterface_ISteamApps(pApps, "STEAMAPPS_INTERFACE_VERSION008");
+		}
+		void *pTicket = Orig_FindOrCreateUserInterface(hUser, "STEAMAPPTICKET_INTERFACE_VERSION001");
+		if (pTicket) {
+			LOG("[DSE-DLL] Pre-hooking ISteamAppTicket at %p\n", pTicket);
+			HookInterface_ISteamAppTicket(pTicket);
+		}
+		void *pUser = Orig_FindOrCreateUserInterface(hUser, "SteamUser021");
+		if (pUser) {
+			LOG("[DSE-DLL] Pre-hooking ISteamUser at %p\n", pUser);
+			HookInterface_ISteamUser(pUser, "SteamUser021");
+		}
+	} else {
+		typedef void *(*pfn_SteamApps)();
+		pfn_SteamApps pSteamApps = (pfn_SteamApps)GetProcAddress(hSteamApi, "SteamApps");
+		if (pSteamApps) {
+			void *pApps = pSteamApps();
+			if (pApps) {
+				LOG("[DSE-DLL] Pre-hooking ISteamApps via SteamApps()\n");
+				HookInterface_ISteamApps(pApps, "STEAMAPPS_INTERFACE_VERSION008");
+			}
+		}
+	}
+}
+
 // Init hooks
 static bool Hooked_SteamAPI_Init() {
 	LOG("[DSE-DLL] SteamAPI_Init()\n");
@@ -929,6 +1218,7 @@ static bool Hooked_SteamAPI_Init() {
 		bool r = Orig_SteamAPI_Init();
 		if (r) {
 			LOG("[DSE-DLL]   (real init succeeded)\n");
+			PreHookSingletons();
 		} else {
 			LOG("[DSE-DLL]   (real init failed)\n");
 		}
@@ -943,6 +1233,7 @@ static int Hooked_SteamAPI_InitFlat(char *pOutErrMsg) {
 		int r = Orig_SteamAPI_InitFlat(pOutErrMsg);
 		if (r == 0) {
 			LOG("[DSE-DLL]   (real InitFlat succeeded)\n");
+			PreHookSingletons();
 		} else {
 			LOG("[DSE-DLL]   (real InitFlat failed with code %d)\n", r);
 		}
@@ -958,6 +1249,7 @@ static int Hooked_SteamInternal_SteamAPI_Init(const char *pszVersions,
 		int r = Orig_SteamInternal_Init(pszVersions, pOutErrMsg);
 		if (r == 0) {
 			LOG("[DSE-DLL]   (real internal init succeeded)\n");
+			PreHookSingletons();
 		} else {
 			LOG("[DSE-DLL]   (real internal init failed with code %d)\n", r);
 		}
@@ -1048,8 +1340,22 @@ static void HookSteamAPI(HMODULE hSteamApi) {
 			LOG("[DSE-DLL]   " label " export not found\n");                  \
 	} while (0)
 
-	TRY_HOOK("SteamAPI_RestartAppIfNecessary", Hooked_RestartAppIfNecessary,
-			 Orig_RestartApp, "RestartAppIfNecessary");
+	WCHAR exeDir[MAX_PATH]{};
+	GetModuleFileNameW(nullptr, exeDir, MAX_PATH);
+	PathRemoveFileSpecW(exeDir);
+	WCHAR reloadedAsiPath[MAX_PATH]{};
+	lstrcpynW(reloadedAsiPath, exeDir, MAX_PATH);
+	PathAppendW(reloadedAsiPath, L"Reloaded.Mod.Loader.Bootstrapper.asi");
+
+	bool isReloaded = g_config.reloaded || (GetFileAttributesW(reloadedAsiPath) != INVALID_FILE_ATTRIBUTES);
+	if (isReloaded) {
+		LOG("[DSE-DLL] Reloaded-II detected or forced by config. Disabling specific Steam API hooks.\n");
+	}
+
+	if (!isReloaded) {
+		TRY_HOOK("SteamAPI_RestartAppIfNecessary", Hooked_SteamAPI_RestartAppIfNecessary,
+				 Orig_RestartApp, "SteamAPI_RestartAppIfNecessary");
+	}
 	TRY_HOOK("SteamAPI_ISteamUser_GetSteamID", Hooked_GetSteamID, Orig_GetSteamID,
 			 "ISteamUser_GetSteamID");
 	TRY_HOOK("SteamAPI_ISteamUser_BLoggedOn", Hooked_BLoggedOn, Orig_BLoggedOn,
@@ -1072,8 +1378,10 @@ static void HookSteamAPI(HMODULE hSteamApi) {
 			 Orig_SteamAPI_InitFlat, "SteamAPI_InitFlat");
 	TRY_HOOK("SteamInternal_SteamAPI_Init", Hooked_SteamInternal_SteamAPI_Init,
 			 Orig_SteamInternal_Init, "SteamInternal_SteamAPI_Init");
-	TRY_HOOK("SteamAPI_IsSteamRunning", Hooked_IsSteamRunning,
-			 Orig_IsSteamRunning, "SteamAPI_IsSteamRunning");
+	if (!isReloaded) {
+		TRY_HOOK("SteamAPI_IsSteamRunning", Hooked_IsSteamRunning,
+				 Orig_IsSteamRunning, "SteamAPI_IsSteamRunning");
+	}
 	TRY_HOOK("SteamAPI_GetSteamInstallPath", Hooked_GetSteamInstallPath,
 			 Orig_GetSteamInstallPath, "SteamAPI_GetSteamInstallPath");
 	TRY_HOOK("SteamInternal_FindOrCreateUserInterface",
