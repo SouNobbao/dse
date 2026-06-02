@@ -541,6 +541,8 @@ static void *Hooked_ClientSlot12(void *self, int32_t hSteamUser, int32_t hSteamP
 	}
 	void *p = Orig_ClientSlot12 ? Orig_ClientSlot12(self, hSteamUser, hSteamPipe, pchVersion) : nullptr;
 	LOG("[DSE-DLL] ISteamClient::Slot12 (GetISteamGenericInterface) %s -> %p\n", pchVersion, p);
+	if (p && pchVersion)
+		HookSteamInterfaceByVersion(p, pchVersion);
 	return p;
 }
 HOOK_CLIENT_SLOT(13);
@@ -745,7 +747,7 @@ static void SwapVTable(void *pInterface, void ***pFakeVTableOut, void ***pRealVT
 	VirtualProtect(pInterface, sizeof(void *), oldProtect, &oldProtect);
 
 	*pFakeVTableOut = fakeVTable;
-	LOG("[DSE-DLL] VTable swapped object at %p (static memory, preserved RTTI)\n", pInterface);
+	LOG("[DSE-DLL] VTable swapped object at %p\n", pInterface);
 }
 
 static void TryHookVTableSlot_Swap(void **fakeVTable, void **realVTable, int slot, LPVOID detour, LPVOID *orig, const char *name) {
@@ -920,49 +922,47 @@ static void HookInterface_ISteamApps(void *pInterface, const char *pszVersion) {
 		g_steamAppsVersion = ver;
 	}
 
-	// BIsSubscribedApp and BIsDlcInstalled were added in ISteamApps002.
-	// Hooking these slots on v001 patches unrelated functions and crashes.
 	if (ver >= 2)
-		TryHookVTableSlot_Swap(g_pFakeSteamAppsVTable, realVTable, 0, (LPVOID)&Hooked_BIsSubscribed_vtable,
-							   (LPVOID *)&Orig_BIsSubscribed_vtable,
-							   "ISteamApps::BIsSubscribed");
+		TryHookVTableSlot(realVTable, 0, (LPVOID)&Hooked_BIsSubscribed_vtable,
+						  (LPVOID *)&Orig_BIsSubscribed_vtable,
+						  "ISteamApps::BIsSubscribed");
 
 	if (ver >= 2)
-		TryHookVTableSlot_Swap(g_pFakeSteamAppsVTable, realVTable, 6, (LPVOID)&Hooked_BIsSubscribedApp_vtable,
-							   (LPVOID *)&Orig_BIsSubscribedApp_vtable,
-							   "ISteamApps::BIsSubscribedApp");
+		TryHookVTableSlot(realVTable, 6, (LPVOID)&Hooked_BIsSubscribedApp_vtable,
+						  (LPVOID *)&Orig_BIsSubscribedApp_vtable,
+						  "ISteamApps::BIsSubscribedApp");
 
 	if (ver >= 2)
-		TryHookVTableSlot_Swap(g_pFakeSteamAppsVTable, realVTable, 7, (LPVOID)&Hooked_BIsDlcInstalled_vtable,
-							   (LPVOID *)&Orig_BIsDlcInstalled_vtable,
-							   "ISteamApps::BIsDlcInstalled");
+		TryHookVTableSlot(realVTable, 7, (LPVOID)&Hooked_BIsDlcInstalled_vtable,
+						  (LPVOID *)&Orig_BIsDlcInstalled_vtable,
+						  "ISteamApps::BIsDlcInstalled");
 
 	if (ver >= 3) {
-		TryHookVTableSlot_Swap(g_pFakeSteamAppsVTable, realVTable, 8, (LPVOID)&Hooked_GetEarliestPurchaseUnixTime_vtable,
-							   (LPVOID *)&Orig_GetEarliestPurchaseUnixTime_vtable,
-							   "ISteamApps::GetEarliestPurchaseUnixTime");
+		TryHookVTableSlot(realVTable, 8, (LPVOID)&Hooked_GetEarliestPurchaseUnixTime_vtable,
+						  (LPVOID *)&Orig_GetEarliestPurchaseUnixTime_vtable,
+						  "ISteamApps::GetEarliestPurchaseUnixTime");
 	}
 
 	if (ver >= 4) {
-		TryHookVTableSlot_Swap(g_pFakeSteamAppsVTable, realVTable, 10, (LPVOID)&Hooked_GetDLCCount_vtable,
-							   (LPVOID *)&Orig_GetDLCCount_vtable,
-							   "ISteamApps::GetDLCCount");
+		TryHookVTableSlot(realVTable, 10, (LPVOID)&Hooked_GetDLCCount_vtable,
+						  (LPVOID *)&Orig_GetDLCCount_vtable,
+						  "ISteamApps::GetDLCCount");
 
-		TryHookVTableSlot_Swap(g_pFakeSteamAppsVTable, realVTable, 11, (LPVOID)&Hooked_BGetDLCDataByIndex_vtable,
-							   (LPVOID *)&Orig_BGetDLCDataByIndex_vtable,
-							   "ISteamApps::BGetDLCDataByIndex");
+		TryHookVTableSlot(realVTable, 11, (LPVOID)&Hooked_BGetDLCDataByIndex_vtable,
+						  (LPVOID *)&Orig_BGetDLCDataByIndex_vtable,
+						  "ISteamApps::BGetDLCDataByIndex");
 	}
 
 	if (ver >= 6) {
-		TryHookVTableSlot_Swap(g_pFakeSteamAppsVTable, realVTable, 19, (LPVOID)&Hooked_BIsAppInstalled_vtable,
-							   (LPVOID *)&Orig_BIsAppInstalled_vtable,
-							   "ISteamApps::BIsAppInstalled");
+		TryHookVTableSlot(realVTable, 19, (LPVOID)&Hooked_BIsAppInstalled_vtable,
+						  (LPVOID *)&Orig_BIsAppInstalled_vtable,
+						  "ISteamApps::BIsAppInstalled");
 	}
 
 	if (ver >= 8) {
-		TryHookVTableSlot_Swap(g_pFakeSteamAppsVTable, realVTable, 20, (LPVOID)&Hooked_GetAppOwner_vtable,
-							   (LPVOID *)&Orig_GetAppOwner_vtable,
-							   "ISteamApps::GetAppOwner");
+		TryHookVTableSlot(realVTable, 20, (LPVOID)&Hooked_GetAppOwner_vtable,
+						  (LPVOID *)&Orig_GetAppOwner_vtable,
+						  "ISteamApps::GetAppOwner");
 	}
 }
 
@@ -1147,6 +1147,7 @@ HOOK_STEAMAPPS(005);
 HOOK_STEAMAPPS(006);
 HOOK_STEAMAPPS(007);
 HOOK_STEAMAPPS(008);
+HOOK_STEAMAPPS(009);
 
 #define HOOK_STEAMCLIENT(ver)                                                \
 	typedef void *(*pfn_SteamClient##ver)();                                 \
@@ -1461,6 +1462,7 @@ static void HookSteamAPI(HMODULE hSteamApi) {
 	DO_HOOK_STEAMAPPS(006);
 	DO_HOOK_STEAMAPPS(007);
 	DO_HOOK_STEAMAPPS(008);
+	DO_HOOK_STEAMAPPS(009);
 
 #define DO_HOOK_STEAMCLIENT(ver)                                              \
 	do {                                                                      \
