@@ -326,7 +326,7 @@ static void OnProcessAttach(HMODULE hModule) {
 	InitializeHooks();
 	if (g_config.steamHooks) {
 		InitSteamHooks();
-		InitSteamColdHooks();
+		if (g_config.coldloaderhooks) InitSteamColdHooks();
 	} else {
 		LOG("[DSE-DLL] Steam hooks disabled by config\n");
 	}
