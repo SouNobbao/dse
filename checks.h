@@ -7,3 +7,4 @@ void SystemChecks();
 void ManageProblematicServices();
 void RestoreProblematicServices();
 void ManageProblematicTasks();
+void WaitForWatchdogToExit();

@@ -76,9 +76,12 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
 	}
 	CheckAndSetAfterburnerEvent();
 
+	HANDLE hWatchdogMutex = CreateMutexW(nullptr, TRUE, L"Local\\DseDll_WatchdogAlive");
+
 	HANDLE hProc = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)pid);
 	if (!hProc) {
 		LOG("[WATCHDOG] OpenProcess failed! err: %lu\n", GetLastError());
+		if (hWatchdogMutex) CloseHandle(hWatchdogMutex);
 		return;
 	}
 
@@ -112,6 +115,7 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
 
 	CloseDseEvents();
 	DeleteFileW(drvPath);
+	if (hWatchdogMutex) CloseHandle(hWatchdogMutex);
 	LOG("[WATCHDOG] Exiting.\n");
 	exit(0);
 }

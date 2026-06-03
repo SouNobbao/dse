@@ -8,8 +8,9 @@
 #include "drvloader_bin.cpp"
 #endif
 
-#include "log.h"
 #include "afterburner.h"
+#include "checks.h"
+#include "log.h"
 
 #include <cassert>
 #include <cstdio>
@@ -219,8 +220,8 @@ void RunPatcherCommand(LPCWSTR args) {
 
 void DisableDse() { RunPatcherCommand(patcherDisablearg); }
 
-void EnableDse() { 
-	RunPatcherCommand(patcherEnablearg); 
+void EnableDse() {
+	RunPatcherCommand(patcherEnablearg);
 	if (WasAfterburnerRunning()) {
 		StartAfterburner();
 	}

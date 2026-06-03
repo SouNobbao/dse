@@ -104,7 +104,7 @@ void ManageProblematicServices() {
 		return;
 	}
 
-	for (const auto& svc : g_config.problematicServices) {
+	for (const auto &svc : g_config.problematicServices) {
 		SC_HANDLE hService = OpenServiceW(hSCM, svc.name.c_str(), SERVICE_ALL_ACCESS);
 		if (hService) {
 			if (svc.action == ServiceActionType::STOP) {
@@ -125,9 +125,10 @@ void ManageProblematicServices() {
 
 void RestoreProblematicServices() {
 	SC_HANDLE hSCM = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_ALL_ACCESS);
-	if (!hSCM) return;
+	if (!hSCM)
+		return;
 
-	for (const auto& svc : g_config.problematicServices) {
+	for (const auto &svc : g_config.problematicServices) {
 		if (svc.action == ServiceActionType::STOP) {
 			SC_HANDLE hService = OpenServiceW(hSCM, svc.name.c_str(), SERVICE_ALL_ACCESS);
 			if (hService) {
@@ -148,9 +149,10 @@ void RestoreProblematicServices() {
 	CloseServiceHandle(hSCM);
 }
 
-static void KillProcessTreeByName(const std::wstring& name) {
+static void KillProcessTreeByName(const std::wstring &name) {
 	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-	if (snapshot == INVALID_HANDLE_VALUE) return;
+	if (snapshot == INVALID_HANDLE_VALUE)
+		return;
 
 	PROCESSENTRY32W entry = {};
 	entry.dwSize = sizeof(entry);
@@ -171,7 +173,65 @@ static void KillProcessTreeByName(const std::wstring& name) {
 }
 
 void ManageProblematicTasks() {
-	for (const auto& task : g_config.problematicTasks) {
+	for (const auto &task : g_config.problematicTasks) {
 		KillProcessTreeByName(task);
 	}
+}
+
+void WaitForWatchdogToExit() {
+	// 1. Check for new watchdog mutex
+	HANDLE hMutex = OpenMutexW(SYNCHRONIZE, FALSE, L"Local\\DseDll_WatchdogAlive");
+	if (hMutex) {
+		LOG("[DSE-DLL] Watchdog mutex found, waiting...\n");
+		WaitForSingleObject(hMutex, INFINITE);
+		CloseHandle(hMutex);
+		LOG("[DSE-DLL] Watchdog finished.\n");
+		return;
+	}
+
+	extern HMODULE g_hModule;
+	WCHAR ourDllName[MAX_PATH];
+	if (!GetModuleFileNameW(g_hModule, ourDllName, MAX_PATH))
+		return;
+
+	bool found;
+	do {
+		found = false;
+		HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+		if (snapshot != INVALID_HANDLE_VALUE) {
+			PROCESSENTRY32W entry = {};
+			entry.dwSize = sizeof(entry);
+			if (Process32FirstW(snapshot, &entry)) {
+				do {
+					if (lstrcmpiW(entry.szExeFile, L"rundll32.exe") == 0) {
+						HANDLE hModSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, entry.th32ProcessID);
+						if (hModSnap != INVALID_HANDLE_VALUE) {
+							MODULEENTRY32W modEntry = {};
+							modEntry.dwSize = sizeof(modEntry);
+							if (Module32FirstW(hModSnap, &modEntry)) {
+								do {
+									if (lstrcmpiW(modEntry.szExePath, ourDllName) == 0) {
+										found = true;
+										LOG("[DSE-DLL] Found watchdog process (PID %lu) via module, waiting...\n", entry.th32ProcessID);
+										HANDLE hWait = OpenProcess(SYNCHRONIZE, FALSE, entry.th32ProcessID);
+										if (hWait) {
+											WaitForSingleObject(hWait, INFINITE);
+											CloseHandle(hWait);
+										} else {
+											Sleep(500);
+										}
+										break;
+									}
+								} while (Module32NextW(hModSnap, &modEntry));
+							}
+							CloseHandle(hModSnap);
+						}
+					}
+					if (found)
+						break;
+				} while (Process32NextW(snapshot, &entry));
+			}
+			CloseHandle(snapshot);
+		}
+	} while (found);
 }

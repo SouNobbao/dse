@@ -4,8 +4,8 @@
 #include <minwindef.h>
 #include <windows.h>
 
-typedef BOOL(WINAPI *pCreateProcessW_t)(LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES,
-										LPSECURITY_ATTRIBUTES, BOOL, DWORD,
+typedef bool(WINAPI *pCreateProcessW_t)(LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES,
+										LPSECURITY_ATTRIBUTES, bool, DWORD,
 										LPVOID, LPCWSTR, LPSTARTUPINFOW,
 										LPPROCESS_INFORMATION);
 

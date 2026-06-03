@@ -301,6 +301,7 @@ static void OnProcessAttach(HMODULE hModule) {
 		SystemChecks();
 
 		if (g_config.toggleDse) {
+			WaitForWatchdogToExit();
 			if (!IsDseEnabledNtdll()) {
 				if (CheckAndSetDseToggled()) {
 					LOG("[DSE-DLL] DSE off (parent disabled it), proceeding normally\n");
