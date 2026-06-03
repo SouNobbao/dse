@@ -7,7 +7,7 @@
 
 #pragma comment(lib, "shlwapi.lib")
 
-DseConfig g_config = {true, false, false, false, {}, {}};
+DseConfig g_config = {true, false, false, false, L"", false, {}, {}};
 
 static bool ReadIniBool(LPCWSTR section, LPCWSTR key, bool defaultVal,
 						LPCWSTR iniPath) {
@@ -65,6 +65,8 @@ void LoadDseConfig(HMODULE hModule) {
 			fwprintf(file, L"[dse]\n; Automatically toggle DSE. If DSE was already "
 						   L"disabled, patcher will not run.\ntoggleDse=true\n"
 						   L"; Enable/disable Steam API hooks\nsteamHooks=false\n"
+						   L"; Enable coldloader support (for games that need it)\ncoldloaderhooks=false\n"
+						   L"; Path to original Steam client for coldloaderhooks\nsteam_path=\n"
 						   L"; Enable/disable logging output\nlogging=false\n"
 						   L"; Disable some Steam API hooks when using Reloaded-II\n"
 						   L"reloaded=false\n\n"
@@ -80,6 +82,12 @@ void LoadDseConfig(HMODULE hModule) {
 
 	g_config.toggleDse = ReadIniBool(L"dse", L"toggleDse", true, iniPath);
 	g_config.steamHooks = ReadIniBool(L"dse", L"steamHooks", false, iniPath);
+	g_config.coldloaderhooks = ReadIniBool(L"dse", L"coldloaderhooks", false, iniPath);
+
+	WCHAR pathBuf[MAX_PATH]{};
+	GetPrivateProfileStringW(L"dse", L"steam_path", L"", pathBuf, ARRAYSIZE(pathBuf), iniPath);
+	g_config.steam_path = pathBuf;
+
 	g_config.reloaded = ReadIniBool(L"dse", L"reloaded", false, iniPath);
 	g_config.logging = ReadIniBool(L"dse", L"logging", false, iniPath);
 

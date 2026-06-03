@@ -28,6 +28,7 @@ extern "C" __declspec(dllexport) void DseDll(void) {}
 
 HMODULE g_hModule = nullptr;
 
+#include "steam_coldclient_hooks.cpp"
 #include "steam_hooks.cpp"
 
 static bool IsRundll32Host() {
@@ -325,6 +326,7 @@ static void OnProcessAttach(HMODULE hModule) {
 	InitializeHooks();
 	if (g_config.steamHooks) {
 		InitSteamHooks();
+		InitSteamColdHooks();
 	} else {
 		LOG("[DSE-DLL] Steam hooks disabled by config\n");
 	}

@@ -19,6 +19,8 @@ struct DseConfig {
 	bool toggleDse;
 	bool steamHooks;
 	bool reloaded;
+	bool coldloaderhooks;
+	std::wstring steam_path;
 
 	bool logging;
 	std::vector<ProblematicService> problematicServices;
