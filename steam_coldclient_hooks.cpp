@@ -3,8 +3,8 @@
 #include "log.h"
 #include "minhook/include/MinHook.h"
 #include "peb_struct.h"
-#include <Windows.h>
 #include <shlwapi.h>
+#include <windows.h>
 
 static UNICODE_STRING g_origBaseDllName{};
 static UNICODE_STRING g_origFullDllName{};
