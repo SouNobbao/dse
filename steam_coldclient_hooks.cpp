@@ -46,6 +46,10 @@ static void RenameLdrEntry(HMODULE hModule, LPCWSTR newName, bool isRestore) {
 
 	rename(&pPEB->Ldr->InLoadOrderModuleList,
 		   offsetof(LDR_DATA_TABLE_ENTRY_CUSTOM, InLoadOrderLinks));
+	rename(&pPEB->Ldr->InMemoryOrderModuleList,
+		   offsetof(LDR_DATA_TABLE_ENTRY_CUSTOM, InMemoryOrderLinks));
+	rename(&pPEB->Ldr->InInitializationOrderModuleList,
+		   offsetof(LDR_DATA_TABLE_ENTRY_CUSTOM, InInitializationOrderLinks));
 
 	LOG("[DSE-DLL] Renamed LDR entry for %p to %ls\n", hModule, newName);
 }

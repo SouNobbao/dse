@@ -7,147 +7,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <psapi.h>
 #include <shlwapi.h>
 #include <vector>
 #include <windows.h>
-
-static bool IATHook(HMODULE hModule, const char *dllName, const char *funcName,
-					void *hookFunc, void **origFunc) {
-	if (!hModule || !dllName || !funcName || !hookFunc)
-		return false;
-
-	PIMAGE_DOS_HEADER dosHdr = (PIMAGE_DOS_HEADER)hModule;
-	if (dosHdr->e_magic != IMAGE_DOS_SIGNATURE)
-		return false;
-	PIMAGE_NT_HEADERS ntHdr = (PIMAGE_NT_HEADERS)((BYTE *)hModule + dosHdr->e_lfanew);
-	if (ntHdr->Signature != IMAGE_NT_SIGNATURE)
-		return false;
-
-	DWORD impRVA = ntHdr->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
-	if (!impRVA)
-		return false;
-
-	PIMAGE_IMPORT_DESCRIPTOR importDesc = (PIMAGE_IMPORT_DESCRIPTOR)((BYTE *)hModule + impRVA);
-
-	for (; importDesc->Name; importDesc++) {
-		const char *modName = (const char *)((BYTE *)hModule + importDesc->Name);
-		if (_stricmp(modName, dllName) != 0)
-			continue;
-
-		PIMAGE_THUNK_DATA origThunk = (PIMAGE_THUNK_DATA)((BYTE *)hModule + importDesc->OriginalFirstThunk);
-		PIMAGE_THUNK_DATA iatThunk = (PIMAGE_THUNK_DATA)((BYTE *)hModule + importDesc->FirstThunk);
-
-		for (; origThunk->u1.AddressOfData; origThunk++, iatThunk++) {
-			if (IMAGE_SNAP_BY_ORDINAL(origThunk->u1.Ordinal))
-				continue;
-			PIMAGE_IMPORT_BY_NAME importByName =
-				(PIMAGE_IMPORT_BY_NAME)((BYTE *)hModule + origThunk->u1.AddressOfData);
-			if (strcmp(importByName->Name, funcName) != 0)
-				continue;
-
-			if (origFunc)
-				*origFunc = (void *)iatThunk->u1.Function;
-
-			DWORD oldProtect;
-			VirtualProtect(&iatThunk->u1.Function, sizeof(void *), PAGE_READWRITE, &oldProtect);
-			iatThunk->u1.Function = (ULONG_PTR)hookFunc;
-			VirtualProtect(&iatThunk->u1.Function, sizeof(void *), oldProtect, &oldProtect);
-			return true;
-		}
-	}
-	return false;
-}
-
-static int IATHookByAddress(void *realFunc, void *hookFunc, void **origFunc) {
-	if (!realFunc || !hookFunc)
-		return 0;
-
-	if (origFunc)
-		*origFunc = realFunc;
-
-	int count = 0;
-	HMODULE hMods[256];
-	DWORD cbNeeded;
-	HANDLE hProc = GetCurrentProcess();
-
-	if (!EnumProcessModules(hProc, hMods, sizeof(hMods), &cbNeeded))
-		return 0;
-
-	int nMods = cbNeeded / sizeof(HMODULE);
-	for (int m = 0; m < nMods; m++) {
-		HMODULE hMod = hMods[m];
-		PIMAGE_DOS_HEADER dosHdr = (PIMAGE_DOS_HEADER)hMod;
-		if (dosHdr->e_magic != IMAGE_DOS_SIGNATURE)
-			continue;
-		PIMAGE_NT_HEADERS ntHdr = (PIMAGE_NT_HEADERS)((BYTE *)hMod + dosHdr->e_lfanew);
-		if (ntHdr->Signature != IMAGE_NT_SIGNATURE)
-			continue;
-
-		DWORD impRVA = ntHdr->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
-		DWORD impSize = ntHdr->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].Size;
-		if (!impRVA || !impSize)
-			continue;
-
-		PIMAGE_IMPORT_DESCRIPTOR importDesc = (PIMAGE_IMPORT_DESCRIPTOR)((BYTE *)hMod + impRVA);
-		for (; importDesc->Name; importDesc++) {
-			if (!importDesc->FirstThunk)
-				continue;
-			PIMAGE_THUNK_DATA iatThunk = (PIMAGE_THUNK_DATA)((BYTE *)hMod + importDesc->FirstThunk);
-			for (; iatThunk->u1.Function; iatThunk++) {
-				if ((void *)iatThunk->u1.Function == realFunc) {
-					DWORD oldProtect;
-					VirtualProtect(&iatThunk->u1.Function, sizeof(void *), PAGE_READWRITE, &oldProtect);
-					iatThunk->u1.Function = (ULONG_PTR)hookFunc;
-					VirtualProtect(&iatThunk->u1.Function, sizeof(void *), oldProtect, &oldProtect);
-					count++;
-				}
-			}
-		}
-	}
-	return count;
-}
-
-struct IATHookEntry {
-	const char *funcName;
-	void *hookFunc;
-	void *origFunc;
-};
-static IATHookEntry g_iatHookTable[64];
-static int g_iatHookCount = 0;
-
-static void RegisterIATHook(const char *funcName, void *hookFunc, void *origFunc) {
-	if (g_iatHookCount >= 64)
-		return;
-	g_iatHookTable[g_iatHookCount].funcName = funcName;
-	g_iatHookTable[g_iatHookCount].hookFunc = hookFunc;
-	g_iatHookTable[g_iatHookCount].origFunc = origFunc;
-	g_iatHookCount++;
-}
-
-static void *FindIATHookByName(const char *funcName) {
-	for (int i = 0; i < g_iatHookCount; i++) {
-		if (strcmp(g_iatHookTable[i].funcName, funcName) == 0)
-			return g_iatHookTable[i].hookFunc;
-	}
-	return nullptr;
-}
-
-typedef FARPROC(WINAPI *pfn_GetProcAddress)(HMODULE, LPCSTR);
-static pfn_GetProcAddress Orig_GetProcAddress = nullptr;
-static HMODULE g_hSteamApiModule = nullptr;
-
-static FARPROC WINAPI Hooked_GetProcAddress(HMODULE hModule, LPCSTR lpProcName) {
-	FARPROC result = Orig_GetProcAddress(hModule, lpProcName);
-	if (result && hModule == g_hSteamApiModule && !IS_INTRESOURCE(lpProcName)) {
-		void *hook = FindIATHookByName(lpProcName);
-		if (hook) {
-			LOG("[DSE-DLL] GetProcAddress(\"%s\") intercepted -> hook\n", lpProcName);
-			return (FARPROC)hook;
-		}
-	}
-	return result;
-}
 
 static uint64_t g_fakeSteamID = 70000000000000000ULL; // default SteamID
 static bool g_hasConfiguredSteamID = false;
@@ -1191,6 +1053,10 @@ Hooked_SteamInternal_CreateInterface(const char *pszVersion) {
 	return p;
 }
 
+// SteamAPI_GetHSteamUser
+// Intercept so we can
+// force-install the ISteamUser vtable hook the moment the game resolves its
+// user handle before it ever calls GetSteamID().
 static int32_t Hooked_SteamAPI_GetHSteamUser() {
 	int32_t hUser = Orig_GetHSteamUser ? Orig_GetHSteamUser() : 0;
 	LOG("[DSE-DLL] SteamAPI_GetHSteamUser() = %d\n", hUser);
@@ -1221,6 +1087,7 @@ static int32_t Hooked_SteamAPI_GetHSteamUser() {
 	return hUser;
 }
 
+// Dynamic versioned accessor hooks
 #define HOOK_STEAMUSER(ver)                                              \
 	typedef void *(*pfn_SteamUser##ver)();                               \
 	static pfn_SteamUser##ver Orig_SteamUser##ver = nullptr;             \
@@ -1344,6 +1211,7 @@ static void PreHookSingletons() {
 	}
 }
 
+// Init hooks
 static bool Hooked_SteamAPI_Init() {
 	LOG("[DSE-DLL] SteamAPI_Init()\n");
 	if (Orig_SteamAPI_Init) {
@@ -1410,6 +1278,7 @@ static const char *Hooked_GetSteamInstallPath() {
 	return "";
 }
 
+// Resolve Steam path from registry.
 static void ResolveSteamPath() {
 	if (g_steamPath[0])
 		return;
@@ -1443,6 +1312,7 @@ static void SetSteamEnvVars() {
 	LOG("[DSE-DLL] Set SteamPath env = %s\n", g_steamPath);
 }
 
+// Hook all steam_api exports.
 static void HookSteamAPI(HMODULE hSteamApi) {
 	static bool hooked = false;
 	if (hooked)
@@ -1456,18 +1326,18 @@ static void HookSteamAPI(HMODULE hSteamApi) {
 	ResolveSteamPath();
 	SetSteamEnvVars();
 
-#define TRY_IAT_HOOK(export, fn, orig, label)                                                  \
-	do {                                                                                       \
-		auto _p = (void *)GetProcAddress(hSteamApi, export);                                   \
-		if (_p) {                                                                              \
-			int _n = IATHookByAddress(_p, (void *)&fn, (void **)&orig);                        \
-			RegisterIATHook(export, (void *)&fn, _p);                                          \
-			if (_n > 0)                                                                        \
-				LOG("[DSE-DLL]   IAT-hooked " label " (%d entries)\n", _n);                    \
-			else                                                                               \
-				LOG("[DSE-DLL]   " label " registered (no IAT, GetProcAddress will catch)\n"); \
-		} else                                                                                 \
-			LOG("[DSE-DLL]   " label " export not found\n");                                   \
+#define TRY_HOOK(export, fn, orig, label)                                     \
+	do {                                                                      \
+		auto _p = (LPVOID)GetProcAddress(hSteamApi, export);                  \
+		if (_p) {                                                             \
+			MH_STATUS _s = MH_CreateHook(_p, (LPVOID) & fn, (LPVOID *)&orig); \
+			if (_s == MH_OK) {                                                \
+				MH_EnableHook(_p);                                            \
+				LOG("[DSE-DLL]   Hooked " label "\n");                        \
+			} else                                                            \
+				LOG("[DSE-DLL]   Failed to hook " label ": %d\n", _s);        \
+		} else                                                                \
+			LOG("[DSE-DLL]   " label " export not found\n");                  \
 	} while (0)
 
 	WCHAR exeDir[MAX_PATH]{};
@@ -1483,153 +1353,148 @@ static void HookSteamAPI(HMODULE hSteamApi) {
 	}
 
 	if (!isReloaded) {
-		TRY_IAT_HOOK("SteamAPI_RestartAppIfNecessary", Hooked_SteamAPI_RestartAppIfNecessary,
-					 Orig_RestartApp, "SteamAPI_RestartAppIfNecessary");
+		TRY_HOOK("SteamAPI_RestartAppIfNecessary", Hooked_SteamAPI_RestartAppIfNecessary,
+				 Orig_RestartApp, "SteamAPI_RestartAppIfNecessary");
 	}
-	TRY_IAT_HOOK("SteamAPI_ISteamUser_GetSteamID", Hooked_GetSteamID, Orig_GetSteamID,
-				 "ISteamUser_GetSteamID");
-	TRY_IAT_HOOK("SteamAPI_ISteamUser_BLoggedOn", Hooked_BLoggedOn, Orig_BLoggedOn,
-				 "ISteamUser_BLoggedOn");
-	TRY_IAT_HOOK("SteamAPI_ISteamUser_UserHasLicenseForApp", Hooked_UserHasLicenseForApp_flat,
-				 Orig_UserHasLicenseForApp_flat, "ISteamUser_UserHasLicenseForApp");
-	TRY_IAT_HOOK("SteamAPI_ISteamFriends_GetPersonaState", Hooked_GetPersonaState,
-				 Orig_GetPersonaState, "ISteamFriends_GetPersonaState");
-	TRY_IAT_HOOK("SteamAPI_ISteamAppTicket_GetAppOwnershipTicketData", Hooked_GetAppOwnershipTicketData_flat,
-				 Orig_GetAppOwnershipTicketData_flat, "ISteamAppTicket_GetAppOwnershipTicketData");
-	TRY_IAT_HOOK("SteamAPI_ISteamClient_GetISteamGenericInterface", Hooked_ISteamClient_GetISteamGenericInterface_flat,
-				 Orig_ISteamClient_GetISteamGenericInterface_flat, "ISteamClient_GetISteamGenericInterface");
-	TRY_IAT_HOOK("SteamAPI_ISteamClient_GetISteamApps", Hooked_ISteamClient_GetISteamApps_flat,
-				 Orig_ISteamClient_GetISteamApps_flat, "ISteamClient_GetISteamApps");
-	TRY_IAT_HOOK("SteamAPI_ISteamApps_BIsSubscribedApp", Hooked_BIsSubscribedApp_flat,
-				 Orig_BIsSubscribedApp_flat, "ISteamApps_BIsSubscribedApp");
-	TRY_IAT_HOOK("SteamAPI_Init", Hooked_SteamAPI_Init, Orig_SteamAPI_Init,
-				 "SteamAPI_Init");
-	TRY_IAT_HOOK("SteamAPI_InitFlat", Hooked_SteamAPI_InitFlat,
-				 Orig_SteamAPI_InitFlat, "SteamAPI_InitFlat");
-	TRY_IAT_HOOK("SteamInternal_SteamAPI_Init", Hooked_SteamInternal_SteamAPI_Init,
-				 Orig_SteamInternal_Init, "SteamInternal_SteamAPI_Init");
+	TRY_HOOK("SteamAPI_ISteamUser_GetSteamID", Hooked_GetSteamID, Orig_GetSteamID,
+			 "ISteamUser_GetSteamID");
+	TRY_HOOK("SteamAPI_ISteamUser_BLoggedOn", Hooked_BLoggedOn, Orig_BLoggedOn,
+			 "ISteamUser_BLoggedOn");
+	TRY_HOOK("SteamAPI_ISteamUser_UserHasLicenseForApp", Hooked_UserHasLicenseForApp_flat,
+			 Orig_UserHasLicenseForApp_flat, "ISteamUser_UserHasLicenseForApp");
+	TRY_HOOK("SteamAPI_ISteamFriends_GetPersonaState", Hooked_GetPersonaState,
+			 Orig_GetPersonaState, "ISteamFriends_GetPersonaState");
+	TRY_HOOK("SteamAPI_ISteamAppTicket_GetAppOwnershipTicketData", Hooked_GetAppOwnershipTicketData_flat,
+			 Orig_GetAppOwnershipTicketData_flat, "ISteamAppTicket_GetAppOwnershipTicketData");
+	TRY_HOOK("SteamAPI_ISteamClient_GetISteamGenericInterface", Hooked_ISteamClient_GetISteamGenericInterface_flat,
+			 Orig_ISteamClient_GetISteamGenericInterface_flat, "ISteamClient_GetISteamGenericInterface");
+	TRY_HOOK("SteamAPI_ISteamClient_GetISteamApps", Hooked_ISteamClient_GetISteamApps_flat,
+			 Orig_ISteamClient_GetISteamApps_flat, "ISteamClient_GetISteamApps");
+	TRY_HOOK("SteamAPI_ISteamApps_BIsSubscribedApp", Hooked_BIsSubscribedApp_flat,
+			 Orig_BIsSubscribedApp_flat, "ISteamApps_BIsSubscribedApp");
+	TRY_HOOK("SteamAPI_Init", Hooked_SteamAPI_Init, Orig_SteamAPI_Init,
+			 "SteamAPI_Init");
+	TRY_HOOK("SteamAPI_InitFlat", Hooked_SteamAPI_InitFlat,
+			 Orig_SteamAPI_InitFlat, "SteamAPI_InitFlat");
+	TRY_HOOK("SteamInternal_SteamAPI_Init", Hooked_SteamInternal_SteamAPI_Init,
+			 Orig_SteamInternal_Init, "SteamInternal_SteamAPI_Init");
 	if (!isReloaded) {
-		TRY_IAT_HOOK("SteamAPI_IsSteamRunning", Hooked_IsSteamRunning,
-					 Orig_IsSteamRunning, "SteamAPI_IsSteamRunning");
+		TRY_HOOK("SteamAPI_IsSteamRunning", Hooked_IsSteamRunning,
+				 Orig_IsSteamRunning, "SteamAPI_IsSteamRunning");
 	}
-	TRY_IAT_HOOK("SteamAPI_GetSteamInstallPath", Hooked_GetSteamInstallPath,
-				 Orig_GetSteamInstallPath, "SteamAPI_GetSteamInstallPath");
-	TRY_IAT_HOOK("SteamInternal_FindOrCreateUserInterface",
-				 Hooked_SteamInternal_FindOrCreateUserInterface,
-				 Orig_FindOrCreateUserInterface,
-				 "SteamInternal_FindOrCreateUserInterface");
-	TRY_IAT_HOOK("SteamAPI_GetHSteamUser", Hooked_SteamAPI_GetHSteamUser,
-				 Orig_GetHSteamUser, "SteamAPI_GetHSteamUser");
-	TRY_IAT_HOOK("SteamInternal_CreateInterface", Hooked_SteamInternal_CreateInterface,
-				 Orig_SteamInternal_CreateInterface, "SteamInternal_CreateInterface");
+	TRY_HOOK("SteamAPI_GetSteamInstallPath", Hooked_GetSteamInstallPath,
+			 Orig_GetSteamInstallPath, "SteamAPI_GetSteamInstallPath");
+	TRY_HOOK("SteamInternal_FindOrCreateUserInterface",
+			 Hooked_SteamInternal_FindOrCreateUserInterface,
+			 Orig_FindOrCreateUserInterface,
+			 "SteamInternal_FindOrCreateUserInterface");
+	TRY_HOOK("SteamAPI_GetHSteamUser", Hooked_SteamAPI_GetHSteamUser,
+			 Orig_GetHSteamUser, "SteamAPI_GetHSteamUser");
+	TRY_HOOK("SteamInternal_CreateInterface", Hooked_SteamInternal_CreateInterface,
+			 Orig_SteamInternal_CreateInterface, "SteamInternal_CreateInterface");
 
-#undef TRY_IAT_HOOK
+#undef TRY_HOOK
 
-#define DO_IAT_HOOK_STEAMUSER(ver)                                               \
+#define DO_HOOK_STEAMUSER(ver)                                                   \
 	do {                                                                         \
-		auto p = (void *)GetProcAddress(hSteamApi, "SteamAPI_SteamUser_v" #ver); \
+		auto p = (LPVOID)GetProcAddress(hSteamApi, "SteamAPI_SteamUser_v" #ver); \
 		if (p) {                                                                 \
-			int _n = IATHookByAddress(p, (void *)&Hooked_SteamUser##ver,         \
-									  (void **)&Orig_SteamUser##ver);            \
-			RegisterIATHook("SteamAPI_SteamUser_v" #ver,                         \
-							(void *)&Hooked_SteamUser##ver, p);                  \
-			LOG("[DSE-DLL] Hooked SteamAPI_SteamUser_v" #ver " (%d)\n", _n);     \
+			MH_CreateHook(p, (LPVOID) & Hooked_SteamUser##ver,                   \
+						  (LPVOID *)&Orig_SteamUser##ver);                       \
+			MH_EnableHook(p);                                                    \
+			LOG("[DSE-DLL]   Hooked SteamAPI_SteamUser_v" #ver "\n");            \
 		}                                                                        \
 	} while (0)
 
-	DO_IAT_HOOK_STEAMUSER(015);
-	DO_IAT_HOOK_STEAMUSER(016);
-	DO_IAT_HOOK_STEAMUSER(017);
-	DO_IAT_HOOK_STEAMUSER(018);
-	DO_IAT_HOOK_STEAMUSER(019);
-	DO_IAT_HOOK_STEAMUSER(020);
-	DO_IAT_HOOK_STEAMUSER(021);
-	DO_IAT_HOOK_STEAMUSER(022);
-	DO_IAT_HOOK_STEAMUSER(023);
-	DO_IAT_HOOK_STEAMUSER(024);
-	DO_IAT_HOOK_STEAMUSER(025);
+	DO_HOOK_STEAMUSER(015);
+	DO_HOOK_STEAMUSER(016);
+	DO_HOOK_STEAMUSER(017);
+	DO_HOOK_STEAMUSER(018);
+	DO_HOOK_STEAMUSER(019);
+	DO_HOOK_STEAMUSER(020);
+	DO_HOOK_STEAMUSER(021);
+	DO_HOOK_STEAMUSER(022);
+	DO_HOOK_STEAMUSER(023);
+	DO_HOOK_STEAMUSER(024);
+	DO_HOOK_STEAMUSER(025);
 
-#define DO_IAT_HOOK_STEAMFRIENDS(ver)                                           \
-	do {                                                                        \
-		auto p = (void *)GetProcAddress(hSteamApi,                              \
-										"SteamAPI_SteamFriends_v" #ver);        \
-		if (p) {                                                                \
-			int _n = IATHookByAddress(p, (void *)&Hooked_SteamFriends##ver,     \
-									  (void **)&Orig_SteamFriends##ver);        \
-			RegisterIATHook("SteamAPI_SteamFriends_v" #ver,                     \
-							(void *)&Hooked_SteamFriends##ver, p);              \
-			LOG("[DSE-DLL] Hooked SteamAPI_SteamFriends_v" #ver " (%d)\n", _n); \
-		}                                                                       \
-	} while (0)
-
-	DO_IAT_HOOK_STEAMFRIENDS(010);
-	DO_IAT_HOOK_STEAMFRIENDS(011);
-	DO_IAT_HOOK_STEAMFRIENDS(012);
-	DO_IAT_HOOK_STEAMFRIENDS(013);
-	DO_IAT_HOOK_STEAMFRIENDS(014);
-	DO_IAT_HOOK_STEAMFRIENDS(015);
-	DO_IAT_HOOK_STEAMFRIENDS(016);
-	DO_IAT_HOOK_STEAMFRIENDS(017);
-	DO_IAT_HOOK_STEAMFRIENDS(018);
-	DO_IAT_HOOK_STEAMFRIENDS(019);
-	DO_IAT_HOOK_STEAMFRIENDS(020);
-
-#define DO_IAT_HOOK_STEAMAPPS(ver)                                           \
-	do {                                                                     \
-		auto p = (void *)GetProcAddress(hSteamApi,                           \
-										"SteamAPI_SteamApps_v" #ver);        \
-		if (p) {                                                             \
-			int _n = IATHookByAddress(p, (void *)&Hooked_SteamApps##ver,     \
-									  (void **)&Orig_SteamApps##ver);        \
-			RegisterIATHook("SteamAPI_SteamApps_v" #ver,                     \
-							(void *)&Hooked_SteamApps##ver, p);              \
-			LOG("[DSE-DLL] Hooked SteamAPI_SteamApps_v" #ver " (%d)\n", _n); \
-		}                                                                    \
-	} while (0)
-
-	DO_IAT_HOOK_STEAMAPPS(001);
-	DO_IAT_HOOK_STEAMAPPS(002);
-	DO_IAT_HOOK_STEAMAPPS(003);
-	DO_IAT_HOOK_STEAMAPPS(004);
-	DO_IAT_HOOK_STEAMAPPS(005);
-	DO_IAT_HOOK_STEAMAPPS(006);
-	DO_IAT_HOOK_STEAMAPPS(007);
-	DO_IAT_HOOK_STEAMAPPS(008);
-	DO_IAT_HOOK_STEAMAPPS(009);
-
-#define DO_IAT_HOOK_STEAMCLIENT(ver)                                           \
+#define DO_HOOK_STEAMFRIENDS(ver)                                              \
 	do {                                                                       \
-		auto p = (void *)GetProcAddress(hSteamApi,                             \
-										"SteamAPI_SteamClient_v" #ver);        \
+		auto p =                                                               \
+			(LPVOID)GetProcAddress(hSteamApi, "SteamAPI_SteamFriends_v" #ver); \
 		if (p) {                                                               \
-			int _n = IATHookByAddress(p, (void *)&Hooked_SteamClient##ver,     \
-									  (void **)&Orig_SteamClient##ver);        \
-			RegisterIATHook("SteamAPI_SteamClient_v" #ver,                     \
-							(void *)&Hooked_SteamClient##ver, p);              \
-			LOG("[DSE-DLL] Hooked SteamAPI_SteamClient_v" #ver " (%d)\n", _n); \
+			MH_CreateHook(p, (LPVOID) & Hooked_SteamFriends##ver,              \
+						  (LPVOID *)&Orig_SteamFriends##ver);                  \
+			MH_EnableHook(p);                                                  \
+			LOG("[DSE-DLL]   Hooked SteamAPI_SteamFriends_v" #ver "\n");       \
 		}                                                                      \
 	} while (0)
 
-	DO_IAT_HOOK_STEAMCLIENT(010);
-	DO_IAT_HOOK_STEAMCLIENT(011);
-	DO_IAT_HOOK_STEAMCLIENT(012);
-	DO_IAT_HOOK_STEAMCLIENT(013);
-	DO_IAT_HOOK_STEAMCLIENT(014);
-	DO_IAT_HOOK_STEAMCLIENT(015);
-	DO_IAT_HOOK_STEAMCLIENT(016);
-	DO_IAT_HOOK_STEAMCLIENT(017);
-	DO_IAT_HOOK_STEAMCLIENT(018);
-	DO_IAT_HOOK_STEAMCLIENT(019);
-	DO_IAT_HOOK_STEAMCLIENT(020);
-	DO_IAT_HOOK_STEAMCLIENT(021);
+	DO_HOOK_STEAMFRIENDS(010);
+	DO_HOOK_STEAMFRIENDS(011);
+	DO_HOOK_STEAMFRIENDS(012);
+	DO_HOOK_STEAMFRIENDS(013);
+	DO_HOOK_STEAMFRIENDS(014);
+	DO_HOOK_STEAMFRIENDS(015);
+	DO_HOOK_STEAMFRIENDS(016);
+	DO_HOOK_STEAMFRIENDS(017);
+	DO_HOOK_STEAMFRIENDS(018);
+	DO_HOOK_STEAMFRIENDS(019);
+	DO_HOOK_STEAMFRIENDS(020);
+
+#define DO_HOOK_STEAMAPPS(ver)                                              \
+	do {                                                                    \
+		auto p =                                                            \
+			(LPVOID)GetProcAddress(hSteamApi, "SteamAPI_SteamApps_v" #ver); \
+		if (p) {                                                            \
+			MH_CreateHook(p, (LPVOID) & Hooked_SteamApps##ver,              \
+						  (LPVOID *)&Orig_SteamApps##ver);                  \
+			MH_EnableHook(p);                                               \
+			LOG("[DSE-DLL]   Hooked SteamAPI_SteamApps_v" #ver "\n");       \
+		}                                                                   \
+	} while (0)
+
+	DO_HOOK_STEAMAPPS(001);
+	DO_HOOK_STEAMAPPS(002);
+	DO_HOOK_STEAMAPPS(003);
+	DO_HOOK_STEAMAPPS(004);
+	DO_HOOK_STEAMAPPS(005);
+	DO_HOOK_STEAMAPPS(006);
+	DO_HOOK_STEAMAPPS(007);
+	DO_HOOK_STEAMAPPS(008);
+	DO_HOOK_STEAMAPPS(009);
+
+#define DO_HOOK_STEAMCLIENT(ver)                                              \
+	do {                                                                      \
+		auto p =                                                              \
+			(LPVOID)GetProcAddress(hSteamApi, "SteamAPI_SteamClient_v" #ver); \
+		if (p) {                                                              \
+			MH_CreateHook(p, (LPVOID) & Hooked_SteamClient##ver,              \
+						  (LPVOID *)&Orig_SteamClient##ver);                  \
+			MH_EnableHook(p);                                                 \
+			LOG("[DSE-DLL]   Hooked SteamAPI_SteamClient_v" #ver "\n");       \
+		}                                                                     \
+	} while (0)
+
+	DO_HOOK_STEAMCLIENT(010);
+	DO_HOOK_STEAMCLIENT(011);
+	DO_HOOK_STEAMCLIENT(012);
+	DO_HOOK_STEAMCLIENT(013);
+	DO_HOOK_STEAMCLIENT(014);
+	DO_HOOK_STEAMCLIENT(015);
+	DO_HOOK_STEAMCLIENT(016);
+	DO_HOOK_STEAMCLIENT(017);
+	DO_HOOK_STEAMCLIENT(018);
+	DO_HOOK_STEAMCLIENT(019);
+	DO_HOOK_STEAMCLIENT(020);
+	DO_HOOK_STEAMCLIENT(021);
 
 	do {
-		auto p = (void *)GetProcAddress(hSteamApi, "SteamClient");
+		auto p = (LPVOID)GetProcAddress(hSteamApi, "SteamClient");
 		if (p) {
-			int _n = IATHookByAddress(p, (void *)&Hooked_SteamClient021,
-									  (void **)&Orig_SteamClient021);
-			RegisterIATHook("SteamClient", (void *)&Hooked_SteamClient021, p);
-			LOG("[DSE-DLL] Hooked SteamClient (flat API) (%d)\n", _n);
+			MH_CreateHook(p, (LPVOID)&Hooked_SteamClient021, (LPVOID *)&Orig_SteamClient021);
+			MH_EnableHook(p);
+			LOG("[DSE-DLL]   Hooked SteamClient (flat API)\n");
 		}
 	} while (0);
 
@@ -1659,7 +1524,6 @@ HMODULE WINAPI Hooked_LoadLibraryW(LPCWSTR lpLibFileName) {
 	HMODULE hMod = Orig_LoadLibraryW(lpLibFileName);
 	if (hMod && !g_steamHooked && IsSteamApiDll(lpLibFileName)) {
 		LOG("[DSE-DLL] LoadLibraryW caught: %ls\n", lpLibFileName);
-		g_hSteamApiModule = hMod;
 		HookSteamAPI(hMod);
 	}
 	return hMod;
@@ -1674,7 +1538,6 @@ HMODULE WINAPI Hooked_LoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile,
 	if (hMod && !g_steamHooked && IsSteamApiDll(lpLibFileName) &&
 		!(dwFlags & kDataFlags)) {
 		LOG("[DSE-DLL] LoadLibraryExW caught: %ls\n", lpLibFileName);
-		g_hSteamApiModule = hMod;
 		HookSteamAPI(hMod);
 	}
 	return hMod;
@@ -1682,35 +1545,19 @@ HMODULE WINAPI Hooked_LoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile,
 
 // Entry point
 static void InitSteamHooks() {
-	{
-		void *pGPA = (void *)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetProcAddress");
-		if (pGPA) {
-			int n = IATHookByAddress(pGPA, (void *)&Hooked_GetProcAddress, (void **)&Orig_GetProcAddress);
-			LOG("[DSE-DLL] hooked GetProcAddress (%d entries)\n", n);
-		}
-	}
-
 	HMODULE hExisting = GetModuleHandleW(L"steam_api64.dll");
 	if (!hExisting)
 		hExisting = GetModuleHandleW(L"steam_api.dll");
 	if (hExisting) {
 		LOG("[DSE-DLL] steam_api already loaded - hooking now\n");
-		g_hSteamApiModule = hExisting;
 		HookSteamAPI(hExisting);
 		return;
 	}
-
-	{
-		void *pLLW = (void *)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "LoadLibraryW");
-		if (pLLW) {
-			int n = IATHookByAddress(pLLW, (void *)&Hooked_LoadLibraryW, (void **)&Orig_LoadLibraryW);
-			LOG("[DSE-DLL] IAT-hooked LoadLibraryW (%d entries)\n", n);
-		}
-		void *pLLExW = (void *)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "LoadLibraryExW");
-		if (pLLExW) {
-			int n = IATHookByAddress(pLLExW, (void *)&Hooked_LoadLibraryExW, (void **)&Orig_LoadLibraryExW);
-			LOG("[DSE-DLL] IAT-hooked LoadLibraryExW (%d entries)\n", n);
-		}
-	}
+	MH_CreateHookApi(L"kernel32.dll", "LoadLibraryW",
+					 (LPVOID)&Hooked_LoadLibraryW, (LPVOID *)&Orig_LoadLibraryW);
+	MH_CreateHookApi(L"kernel32.dll", "LoadLibraryExW",
+					 (LPVOID)&Hooked_LoadLibraryExW,
+					 (LPVOID *)&Orig_LoadLibraryExW);
+	MH_EnableHook(MH_ALL_HOOKS);
 	LOG("[DSE-DLL] LoadLibrary hooks set - waiting for steam_api64.dll\n");
 }
