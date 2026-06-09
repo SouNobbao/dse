@@ -164,7 +164,8 @@ BOOL WINAPI HookedCreateProcessW(
 
 		LPCWSTR exeName = PathFindFileNameW(exePath);
 		if (StrStrIW(exeName, L"drvloader") || StrStrIW(exeName, L"crash") ||
-			StrStrIW(exeName, L"watchdog") || StrStrIW(exeName, L"rundll32"))
+			StrStrIW(exeName, L"watchdog") || StrStrIW(exeName, L"rundll32") ||
+			StrStrIW(exeName, L"wmic"))
 			return passthrough();
 	}
 
@@ -326,7 +327,8 @@ static void OnProcessAttach(HMODULE hModule) {
 	InitializeHooks();
 	if (g_config.steamHooks) {
 		InitSteamHooks();
-		if (g_config.coldloaderhooks) InitSteamColdHooks();
+		if (g_config.coldloaderhooks)
+			InitSteamColdHooks();
 	} else {
 		LOG("[DSE-DLL] Steam hooks disabled by config\n");
 	}
