@@ -283,6 +283,20 @@ static void OnProcessAttach(HMODULE hModule) {
 		g_config.toggleDse, g_config.steamHooks,
 		g_config.logging);
 
+	WCHAR hostPath[MAX_PATH]{};
+	if (GetModuleFileNameW(nullptr, hostPath, MAX_PATH)) {
+		LPCWSTR hostExe = PathFindFileNameW(hostPath);
+		if (StrStrIW(hostExe, L"drvloader")  ||
+			StrStrIW(hostExe, L"crash")       ||
+			StrStrIW(hostExe, L"watchdog")    ||
+			StrStrIW(hostExe, L"rundll32")    ||
+			StrStrIW(hostExe, L"wmic")        ||
+			StrStrIW(hostExe, L"crs-handler")) {
+			LOG("[DSE-DLL] DLLATTACH : host is passthrough exe (%ls), skipping\n", hostExe);
+			return;
+		}
+	}
+
 	HideModule();
 
 	if (g_config.toggleDse && !IsRunningAsAdmin()) {
