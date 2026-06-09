@@ -9,6 +9,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <shlwapi.h>
 
 static constexpr LPCWSTR kWatchdogCommandTemplate =
 	L"rundll32.exe \"%s\",DseWatchdog %lu %d %d %s";
@@ -88,7 +89,7 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
 	LOG("[WATCHDOG] Waiting for game to exit...\n");
 	WaitForSingleObject(hProc, INFINITE);
 	CloseHandle(hProc);
-	
+
 	LOG("[WATCHDOG] Game exited!\n");
 
 	if (wasOffFromStart) {
@@ -122,6 +123,20 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
 }
 
 void SpawnWatchdog(bool wasOffFromStart, bool wasToggled) {
+	WCHAR hostPath[MAX_PATH]{};
+	if (GetModuleFileNameW(nullptr, hostPath, MAX_PATH)) {
+		LPCWSTR hostExe = PathFindFileNameW(hostPath);
+		if (StrStrIW(hostExe, L"drvloader")  ||
+			StrStrIW(hostExe, L"crash")       ||
+			StrStrIW(hostExe, L"watchdog")    ||
+			StrStrIW(hostExe, L"rundll32")    ||
+			StrStrIW(hostExe, L"wmic")        ||
+			StrStrIW(hostExe, L"crs-handler")) {
+			LOG("[DSE-DLL] SpawnWatchdog: host is passthrough exe (%ls), skipping\n", hostExe);
+			return;
+		}
+	}
+
 	EnsurePatcherExtracted();
 
 	WCHAR dllPath[MAX_PATH]{};
