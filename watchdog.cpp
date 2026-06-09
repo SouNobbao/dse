@@ -88,6 +88,7 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
 	LOG("[WATCHDOG] Waiting for game to exit...\n");
 	WaitForSingleObject(hProc, INFINITE);
 	CloseHandle(hProc);
+	
 	LOG("[WATCHDOG] Game exited!\n");
 
 	if (wasOffFromStart) {

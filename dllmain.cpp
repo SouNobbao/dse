@@ -23,6 +23,7 @@
 static WCHAR g_targetExe[MAX_PATH] = {0};
 static bool g_wasOffFromStart = false;
 static bool g_wasToggled = false;
+static bool g_isLauncher = false;
 
 extern "C" __declspec(dllexport) void DseDll(void) {}
 
@@ -288,7 +289,7 @@ static void OnProcessAttach(HMODULE hModule) {
 	if (g_config.toggleDse && !IsRunningAsAdmin()) {
 		RelaunchElevatedAndExit();
 	} else {
-		DetectLauncherTarget(g_targetExe, ARRAYSIZE(g_targetExe));
+		DetectLauncherTarget(g_targetExe, ARRAYSIZE(g_targetExe), &g_isLauncher);
 		if (g_config.toggleDse) {
 			ManageProblematicServices();
 			ManageProblematicTasks();
@@ -333,7 +334,7 @@ static void OnProcessAttach(HMODULE hModule) {
 		LOG("[DSE-DLL] Steam hooks disabled by config\n");
 	}
 
-	if (g_targetExe[0]) {
+	if (g_isLauncher) {
 		LOG("[DSE-DLL] Launcher detected, skipping watchdog\n");
 	} else if (g_config.toggleDse) {
 		SpawnWatchdog(g_wasOffFromStart, g_wasToggled);

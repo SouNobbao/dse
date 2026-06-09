@@ -23,10 +23,11 @@ static const LauncherInfo g_knownLaunchers[] = {
 static const int g_numLaunchers =
     sizeof(g_knownLaunchers) / sizeof(g_knownLaunchers[0]);
 
-static bool DetectLauncherTarget(WCHAR *targetExe, DWORD maxLen) {
-  if (!targetExe || maxLen == 0)
+static bool DetectLauncherTarget(WCHAR *targetExe, DWORD maxLen, bool *inLauncher) {
+  if (!targetExe || maxLen == 0 || !inLauncher)
     return false;
   targetExe[0] = L'\0';
+  *inLauncher = false;
 
   WCHAR exePath[MAX_PATH]{};
   if (!GetModuleFileNameW(nullptr, exePath, MAX_PATH))
@@ -71,6 +72,7 @@ static bool DetectLauncherTarget(WCHAR *targetExe, DWORD maxLen) {
 
   LPCWSTR targetName = PathFindFileNameW(targetBuf);
   lstrcpynW(targetExe, targetName, maxLen);
+  *inLauncher = true;
   LOG("[DSE-DLL] Launcher target: %ls\n", targetExe);
   return true;
 }
