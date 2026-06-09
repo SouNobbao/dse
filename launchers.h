@@ -55,7 +55,8 @@ static bool DetectLauncherTarget(WCHAR *targetExe, DWORD maxLen, bool *inLaunche
   WCHAR iniPath[MAX_PATH]{};
   lstrcpynW(iniPath, exeDir, MAX_PATH);
   PathAppendW(iniPath, found->iniFile);
-
+  *inLauncher = true;
+  
   if (GetFileAttributesW(iniPath) == INVALID_FILE_ATTRIBUTES) {
     LOG("[DSE-DLL] INI not found: %ls\n", iniPath);
     return false;
@@ -72,7 +73,6 @@ static bool DetectLauncherTarget(WCHAR *targetExe, DWORD maxLen, bool *inLaunche
 
   LPCWSTR targetName = PathFindFileNameW(targetBuf);
   lstrcpynW(targetExe, targetName, maxLen);
-  *inLauncher = true;
   LOG("[DSE-DLL] Launcher target: %ls\n", targetExe);
   return true;
 }
