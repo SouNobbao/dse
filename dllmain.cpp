@@ -31,12 +31,6 @@ HMODULE g_hModule = nullptr;
 #include "steam_coldclient_hooks.cpp"
 #include "steam_hooks.cpp"
 
-static bool IsRundll32Host() {
-	WCHAR hostExe[MAX_PATH]{};
-	GetModuleFileNameW(nullptr, hostExe, MAX_PATH);
-	return StrStrIW(PathFindFileNameW(hostExe), L"rundll32") != nullptr;
-}
-
 #include "checks.h"
 
 #include "elevator_bin.cpp"
@@ -163,9 +157,7 @@ BOOL WINAPI HookedCreateProcessW(
 			return passthrough();
 
 		LPCWSTR exeName = PathFindFileNameW(exePath);
-		if (StrStrIW(exeName, L"drvloader") || StrStrIW(exeName, L"crash") ||
-			StrStrIW(exeName, L"watchdog") || StrStrIW(exeName, L"rundll32") ||
-			StrStrIW(exeName, L"wmic") || StrStrIW(exeName, L"crs-handler") )
+		if (IsPassthroughExe(exeName))
 			return passthrough();
 	}
 
@@ -270,35 +262,24 @@ static void OnProcessAttach(HMODULE hModule) {
 	DisableThreadLibraryCalls(hModule);
 	g_hModule = hModule;
 
-	if (IsRundll32Host())
-		return;
-
 	LoadDseConfig(hModule);
 	g_loggingEnabled = g_config.logging;
 
+	HideModule();
+
+	WCHAR hostPath[MAX_PATH]{};
+	if (GetModuleFileNameW(nullptr, hostPath, MAX_PATH) && IsPassthroughExe(PathFindFileNameW(hostPath))) {
+		return;
+	}
+
 	SetupLogConsole(g_hModule);
+	
 	LOG("[DSE-DLL] Attached to PID %lu\n", GetCurrentProcessId());
 	LOG("[DSE-DLL] Config: toggleDse=%d steamHooks=%d "
 		"logging=%d\n",
 		g_config.toggleDse, g_config.steamHooks,
 		g_config.logging);
-
-	WCHAR hostPath[MAX_PATH]{};
-	if (GetModuleFileNameW(nullptr, hostPath, MAX_PATH)) {
-		LPCWSTR hostExe = PathFindFileNameW(hostPath);
-		if (StrStrIW(hostExe, L"drvloader")  ||
-			StrStrIW(hostExe, L"crash")       ||
-			StrStrIW(hostExe, L"watchdog")    ||
-			StrStrIW(hostExe, L"rundll32")    ||
-			StrStrIW(hostExe, L"wmic")        ||
-			StrStrIW(hostExe, L"crs-handler")) {
-			LOG("[DSE-DLL] DLLATTACH : host is passthrough exe (%ls), skipping\n", hostExe);
-			return;
-		}
-	}
-
-	HideModule();
-
+	
 	if (g_config.toggleDse && !IsRunningAsAdmin()) {
 		RelaunchElevatedAndExit();
 	} else {
@@ -357,8 +338,10 @@ static void OnProcessAttach(HMODULE hModule) {
 }
 
 static void OnProcessDetach() {
-	if (IsRundll32Host())
+	WCHAR hostPath[MAX_PATH]{};
+	if (GetModuleFileNameW(nullptr, hostPath, MAX_PATH) && IsPassthroughExe(PathFindFileNameW(hostPath))) {
 		return;
+	}
 
 	LOG("[DSE-DLL] Detaching...\n");
 	CloseDseEvents();

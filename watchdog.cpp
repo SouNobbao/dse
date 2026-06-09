@@ -124,17 +124,8 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
 
 void SpawnWatchdog(bool wasOffFromStart, bool wasToggled) {
 	WCHAR hostPath[MAX_PATH]{};
-	if (GetModuleFileNameW(nullptr, hostPath, MAX_PATH)) {
-		LPCWSTR hostExe = PathFindFileNameW(hostPath);
-		if (StrStrIW(hostExe, L"drvloader")  ||
-			StrStrIW(hostExe, L"crash")       ||
-			StrStrIW(hostExe, L"watchdog")    ||
-			StrStrIW(hostExe, L"rundll32")    ||
-			StrStrIW(hostExe, L"wmic")        ||
-			StrStrIW(hostExe, L"crs-handler")) {
-			LOG("[DSE-DLL] SpawnWatchdog: host is passthrough exe (%ls), skipping\n", hostExe);
-			return;
-		}
+	if (GetModuleFileNameW(nullptr, hostPath, MAX_PATH) && IsPassthroughExe(PathFindFileNameW(hostPath))) {
+		return;
 	}
 
 	EnsurePatcherExtracted();
