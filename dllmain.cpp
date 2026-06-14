@@ -23,6 +23,7 @@
 static WCHAR g_targetExe[MAX_PATH] = {0};
 static bool g_wasOffFromStart = false;
 static bool g_wasToggled = false;
+static bool g_isLauncher = false;
 
 extern "C" __declspec(dllexport) void DseDll(void) {}
 
@@ -173,7 +174,9 @@ BOOL WINAPI HookedCreateProcessW(
 		}
 	}
 
-	if (g_config.toggleDse && !g_wasOffFromStart) {
+	if (g_isLauncher) {
+		LOG("[DSE-DLL] CreateProcessW > launcher mode (skipping disabling dse)\n");
+	} else if (g_config.toggleDse && !g_wasOffFromStart) {
 		if (IsDseEnabledNtdll()) {
 			LOG("[DSE-DLL] CreateProcessW > disabling DSE\n");
 			DisableDse();
@@ -223,7 +226,7 @@ HWND WINAPI HookedCreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName,
 										hWndParent, hMenu, hInstance, lpParam);
 
 	static bool s_dseRestored = false;
-	if (!s_dseRestored && g_config.toggleDse && !g_wasOffFromStart && hwnd != nullptr) {
+	if (!s_dseRestored && g_config.toggleDse && !g_wasOffFromStart && !g_isLauncher && hwnd != nullptr) {
 		s_dseRestored = true;
 		if (g_wasToggled) {
 			LOG("[DSE-DLL] Window created > we disabled DSE earlier, restoring now...\n");
@@ -273,17 +276,17 @@ static void OnProcessAttach(HMODULE hModule) {
 	}
 
 	SetupLogConsole(g_hModule);
-	
+
 	LOG("[DSE-DLL] Attached to PID %lu\n", GetCurrentProcessId());
 	LOG("[DSE-DLL] Config: toggleDse=%d steamHooks=%d "
 		"logging=%d\n",
 		g_config.toggleDse, g_config.steamHooks,
 		g_config.logging);
-	
+
 	if (g_config.toggleDse && !IsRunningAsAdmin()) {
 		RelaunchElevatedAndExit();
 	} else {
-		DetectLauncherTarget(g_targetExe, ARRAYSIZE(g_targetExe));
+		g_isLauncher = DetectLauncherTarget(g_targetExe, ARRAYSIZE(g_targetExe));
 		if (g_config.toggleDse) {
 			ManageProblematicServices();
 			ManageProblematicTasks();
@@ -328,7 +331,7 @@ static void OnProcessAttach(HMODULE hModule) {
 		LOG("[DSE-DLL] Steam hooks disabled by config\n");
 	}
 
-	if (g_targetExe[0]) {
+	if (g_isLauncher) {
 		LOG("[DSE-DLL] Launcher detected, skipping watchdog\n");
 	} else if (g_config.toggleDse) {
 		SpawnWatchdog(g_wasOffFromStart, g_wasToggled);

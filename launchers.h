@@ -71,8 +71,11 @@ static bool DetectLauncherTarget(WCHAR *targetExe, DWORD maxLen) {
     return true;
   }
 
-  if (!foundAny)
+  if (!foundAny) {
     LOG("[DSE-DLL] Process '%ls' is not a known launcher\n", exeName);
+    return false;
+  }
 
-  return false;
+  LOG("[DSE-DLL] Process '%ls' is a known launcher but target could not be determined\n", exeName);
+  return true;
 }
