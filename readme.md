@@ -117,3 +117,29 @@ The DLL extracts `drvloader or kvc` and a temporary elevation helper.
 
 > [!NOTE]
 > To add more launchers, add their configuration under `launchers.h`.
+
+## Disclaimer 
+
+You, as the user, are responsible for any misuse of this software. The authors condone the use of this software for any malicious purposes.
+
+### Issues
+
+Before submitting any issues please make sure following:
+- you are sure that the dll was loaded
+- there is not any issue after trying [drvloader](https://github.com/SouNobbao/drvloader-fork/releases/latest) manually
+- where this dll was used, and how it was loaded (e.g. from a launcher, from another dll or linked)
+- you are sure that you don't have external programs interfering with dse.dll (e.g. MSI Afterburner, Rivatuner, Anti-Cheat Systems), and if they were, you are sure that `dse.dll` closed the interfering programs.
+- you are sure that `dse.ini` is correctly configured, for your use case.
+- you are sure that there is not any issue with the game or launcher (e.g. corrupt game files, outdated launcher)
+- you are sure that the launcher is not renamed and corresponds to [launchers.h](https://codeberg.org/sounobbao/dse/src/branch/master/launchers.h#L17-L22)
+- you've read the readme
+
+If all above are true, and you still have issues, please submit an issue with all the information requested above and make sure that `logging=true` is enabled on `dse.ini` and you attach the log file
+
+### External Programs
+
+The files provided in `extras` come from the following places
+
+- pe_reader > [LIEF](https://github.com/lief-project/LIEF)
+- steamclient_loader_x64.exe > [gbe_fork](https://github.com/Detanup01/gbe_fork/)
+- hypervisor-launcher.exe > [hypervisor-launcher](https://git.denuvosanctuary.com/andreh/hypervisor-launcher/)

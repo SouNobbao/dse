@@ -36,19 +36,27 @@ target_compile_definitions(dse PRIVATE
 )
 
 target_compile_options(dse PRIVATE
+    -Oz
     -Wno-deprecated
-    $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti>
     -ffunction-sections
     -fdata-sections
     -fvisibility=hidden
+    -fno-unwind-tables
+    -fno-asynchronous-unwind-tables
+    $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti>
 )
 
 target_link_options(dse PRIVATE
+    -Oz
     -mwindows
     -municode
     -static
     -fuse-ld=lld
-    -Wl,--pdb=dse.pdb
+    -Wl,--gc-sections
+    -Wl,--icf=all
+    -Wl,--strip-all
+    -Wl,--build-id=none
+    -flto=thin
 )
 
 target_link_libraries(dse PRIVATE

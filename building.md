@@ -10,6 +10,7 @@
 Before building, ensure you have the necessary patcher binaries in `bins`
 - `drvloader` is available [here](http://github.com/SouNobbao/drvloader-fork/releases/latest)
 - `kvc` is available [here](https://github.com/wesmar/kvc/releases/tag/latest)
+- `dse_elevator.exe` is compiled from `elevator.cpp`
 
 ## Compiling
 
@@ -32,6 +33,6 @@ clang++ --target=x86_64-w64-mingw32 -O3 -D_STABLE -Wno-deprecated -mwindows -mun
 The extras files are optional
 if you wanna know where to get them
 
-- pe_reader > [LIAF](https://github.com/lief-project/LIEF)
+- pe_reader > [LIEF](https://github.com/lief-project/LIEF)
 - steamclient_loader_x64.exe > [gbe_fork](https://github.com/Detanup01/gbe_fork/)
 - hypervisor-launcher.exe > [hypervisor-launcher](https://git.denuvosanctuary.com/andreh/hypervisor-launcher/)
