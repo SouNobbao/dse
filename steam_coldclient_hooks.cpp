@@ -327,6 +327,20 @@ static HMODULE WINAPI hkLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWOR
 	return hModule;
 }
 
+typedef FARPROC(WINAPI *fnGetProcAddress)(HMODULE hModule, LPCSTR lpProcName);
+static fnGetProcAddress oGetProcAddress = nullptr;
+
+static FARPROC WINAPI hkGetProcAddress(HMODULE hModule, LPCSTR lpProcName) {
+	FARPROC proc = oGetProcAddress(hModule, lpProcName);
+	if (!proc && hModule && hModule == g_hEmulatorClient && g_hRealSteamClient != nullptr) {
+		proc = oGetProcAddress(g_hRealSteamClient, lpProcName);
+		if (proc && ((ULONG_PTR)lpProcName > 0xFFFF)) {
+			LOG("[DSE-DLL] GetProcAddress forwarded %s to real steamclient\n", lpProcName);
+		}
+	}
+	return proc;
+}
+
 void InitSteamColdHooks() {
 	HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
 	HMODULE hKernelBase = GetModuleHandleW(L"kernelbase.dll");
@@ -340,5 +354,17 @@ void InitSteamColdHooks() {
 		MH_CreateHook(pLoadLib, (void *)hkLoadLibraryExW, (void **)&oLoadLibraryExW);
 		MH_EnableHook(pLoadLib);
 		LOG("[DSE-DLL] Hooked LoadLibraryExW to intercept steamclient64.dll\n");
+	}
+
+	void *pGetProcAddr = nullptr;
+	if (hKernelBase)
+		pGetProcAddr = (void *)GetProcAddress(hKernelBase, "GetProcAddress");
+	if (!pGetProcAddr && hKernel32)
+		pGetProcAddr = (void *)GetProcAddress(hKernel32, "GetProcAddress");
+
+	if (pGetProcAddr) {
+		MH_CreateHook(pGetProcAddr, (void *)hkGetProcAddress, (void **)&oGetProcAddress);
+		MH_EnableHook(pGetProcAddr);
+		LOG("[DSE-DLL] Hooked GetProcAddress for steamclient internal exports\n");
 	}
 }
