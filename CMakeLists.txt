@@ -70,9 +70,17 @@ if(MSVC)
     # MSVC-specific compile options
     set(MSVC_COMPILE_OPTIONS
         /utf-8
+        /MP
         /O2
+        /Ob3
+        /Oi
+        /Ot
         /GL
         /Gy
+        /Gw
+        /GF
+        /GS-
+        /fp:fast
         /W3
         $<$<COMPILE_LANGUAGE:CXX>:/permissive->
     )
@@ -102,8 +110,10 @@ if(MSVC)
     set(MSVC_LINK_OPTIONS
         /LTCG
         /OPT:REF
-        /OPT:ICF
+        /OPT:ICF=3
         /INCREMENTAL:NO
+        /DEBUG:NONE
+        /MERGE:.rdata=.text
     )
 
     target_link_options(dse PRIVATE ${MSVC_LINK_OPTIONS})
