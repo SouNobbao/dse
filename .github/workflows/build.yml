@@ -308,12 +308,12 @@ jobs:
           cl /nologo /std:c++17 /O2 /W3 /MD /EHsc elevator.cpp /link /OUT:bins\dse_elevator.exe shlwapi.lib
         }
 
-        # Replace placeholders (use same replacement logic as build.bat)
+        # Replace placeholders
         $xxd = Get-Command xxd -ErrorAction SilentlyContinue
         function Get-Hex([string]$path){ if ($xxd) { $i = & xxd -i $path | Out-String; $m = [regex]::Match($i,'\{([\s\S]*)\}\s*;'); if ($m.Success){ return $m.Groups[1].Value } else { throw 'xxd parse failed' } } else { $b = [System.IO.File]::ReadAllBytes($path); return ($b | ForEach-Object { '0x' + $_.ToString('x2') }) -join ', ' } }
-        if (Test-Path '.\bins\dse_elevator.exe') { $el = Get-Hex '.\bins\dse_elevator.exe'; (Get-Content '.\elevator_bin.cpp' -Raw) -replace '%%placeholder_el_bin%%',$el | Set-Content '.\elevator_bin.cpp' -Encoding ASCII }
-        if (Test-Path '.\bins\drvloader.exe') { $drv = Get-Hex '.\bins\drvloader.exe'; (Get-Content '.\drvloader_bin.cpp' -Raw) -replace '%%placeholder_drv_bin%%',$drv | Set-Content '.\drvloader_bin.cpp' -Encoding ASCII }
-        if (Test-Path '.\bins\kvc.exe') { $kvc = Get-Hex '.\bins\kvc.exe'; (Get-Content '.\kvc_bin.cpp' -Raw) -replace '%%placeholder_kvc_bin%%',$kvc | Set-Content '.\kvc_bin.cpp' -Encoding ASCII }
+        if (Test-Path '.\bins\dse_elevator.exe') { $el = Get-Hex '.\bins\dse_elevator.exe'; (Get-Content '.\elevator_bin.cpp' -Raw) -replace '%placeholder_el_bin%',$el | Set-Content '.\elevator_bin.cpp' -Encoding ASCII }
+        if (Test-Path '.\bins\drvloader.exe') { $drv = Get-Hex '.\bins\drvloader.exe'; (Get-Content '.\drvloader_bin.cpp' -Raw) -replace '%placeholder_drv_bin%',$drv | Set-Content '.\drvloader_bin.cpp' -Encoding ASCII }
+        if (Test-Path '.\bins\kvc.exe') { $kvc = Get-Hex '.\bins\kvc.exe'; (Get-Content '.\kvc_bin.cpp' -Raw) -replace '%placeholder_kvc_bin%',$kvc | Set-Content '.\kvc_bin.cpp' -Encoding ASCII }
 
         # Configure and build with NMake
         cmake -S . -B build-msvc -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release
