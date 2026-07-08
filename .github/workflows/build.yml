@@ -298,7 +298,7 @@ jobs:
         & "$inst\VC\Auxiliary\Build\vcvars64.bat"
 
         # Prepare bins dir
-        md bins | Out-Null
+        md bins -Force | Out-Null
 
         # If linux/minGW artifacts provided an elevator/kvc/drvloader, copy them into bins
         if (Test-Path '.\linux_artifacts\bins\dse_elevator.exe') { copy .\linux_artifacts\bins\dse_elevator.exe .\bins\dse_elevator.exe }
