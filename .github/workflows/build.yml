@@ -238,7 +238,7 @@ jobs:
         cd release
         {
           echo "sha256<<EOF"
-          find . -maxdepth 1 -type f ! -name 'sha256hashes.txt' -print0 | sort -z | xargs -0 sha256sum | sed 's|^\([a-f0-9]\+\)  \./|\1  |' | tee sha256hashes.txt
+          find . -maxdepth 1 -type f ! -name 'sha256hashes.txt' ! -name 'drvloader.exe' ! -name 'dse_elevator.exe' ! -name 'kvc.exe' -print0 | sort -z | xargs -0 sha256sum | sed 's|^\([a-f0-9]\+\)  \./|\1  |' | tee sha256hashes.txt
           echo "EOF"
         } >> "$GITHUB_OUTPUT"
 
