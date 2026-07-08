@@ -272,6 +272,57 @@ jobs:
           echo "drvloader_note=" >> "$GITHUB_OUTPUT"
         fi
 
+    - name: Create Release
+      uses: softprops/action-gh-release@v3
+      with:
+        tag_name: ${{ steps.release_info.outputs.tag }}
+        name: ${{ steps.release_info.outputs.tag }}
+        body: |
+          **Build Date:** ${{ steps.release_info.outputs.date }}
+
+          **Changes:**
+          ${{ github.event.head_commit.message }}
+          ${{ steps.release_info.outputs.kvc_note }}
+          ${{ steps.release_info.outputs.drvloader_note }}
+
+          > [!NOTE]
+          > Note for Windows 11 Insider users: this build doesnt provide pdbs from time to time (in case drvloader doesn't work),
+          > so use KVC build as drvloader does not run correctly without those pdbs
+          > also note we can't rely on kvc --safe mode as the command (`kvc dse`) does not show its state, so bsods may happen
+
+          ```
+          Includes:
+          - dse.dll : toggle dse modes via drvloader (check dse.ini for config) (contains export to add to launchers)
+          - dse_kvc.dll : toggle dse modes via kvc
+
+          Launchers (these launchers already have dse.dll linked, so you can replace the original launcher with these or link it manually):
+          - hypervisor-launcher.exe
+          - steamclient_loader_x64.exe
+
+          PEFile :
+          - pefile.exe : i cant really find a good description to put here, so thingy to link dlls, usage: `pefile.exe [target] [dll to load] [function to call separated by commas]`
+          ```
+
+          **SHA-256 Hashes:**
+          ```
+          ${{ steps.checksums.outputs.sha256 }}
+          ```
+          
+        draft: false
+        prerelease: false
+        files: |
+          ./release/dse.dll
+          ./release/dse_kvc.dll
+          ./release/hypervisor-launcher.exe
+          ./release/steamclient_loader_x64.exe
+          ./release/build.7z
+          ./release/pefile.exe
+          ./release/pe_reader.exe
+          ./release/sha256hashes.txt
+          ./release/dse_msvc.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build_msvc:
     name: Build (MSVC)
     runs-on: windows-2022
