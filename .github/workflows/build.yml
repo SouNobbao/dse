@@ -380,21 +380,7 @@ jobs:
         if (Test-Path '.\bins\drvloader.exe') { copy .\bins\drvloader.exe release\drvloader.exe }
         if (Test-Path '.\bins\kvc.exe') { copy .\bins\kvc.exe release\kvc.exe }
 
-        # Create a zip that contains an _msvc folder with the MSVC outputs and the linux-built bins
-        $tmp = Join-Path $PWD 'msvc_pkg_tmp'
-        if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
-        New-Item -ItemType Directory -Path (Join-Path $tmp '_msvc') | Out-Null
-        copy release\dse.dll (Join-Path $tmp '_msvc\dse.dll')
-        copy release\dse_kvc.dll (Join-Path $tmp '_msvc\dse_kvc.dll')
-        if (Test-Path 'release\dse_elevator.exe') { copy release\dse_elevator.exe (Join-Path $tmp '_msvc\dse_elevator.exe') }
-        if (Test-Path 'release\drvloader.exe') { copy release\drvloader.exe (Join-Path $tmp '_msvc\drvloader.exe') }
-        if (Test-Path 'release\kvc.exe') { copy release\kvc.exe (Join-Path $tmp '_msvc\kvc.exe') }
-        $zipPath = Join-Path $PWD 'release\dse_msvc.zip'
-        if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-        Compress-Archive -Path (Join-Path $tmp '*') -DestinationPath $zipPath
-        Remove-Item -Recurse -Force $tmp
-
-        # Generate a self-signed PFX
+        # Generate a self-signed PFX and sign DLLs before packaging
         Write-Host "Generating self-signed PFX on runner"
         $genOut = & powershell -NoProfile -ExecutionPolicy Bypass -File .\.github\scripts\generate_pfx.ps1 -EmitEnvToStdout
         # parse output lines like SIGNING_PFX=... and SIGNING_PASSWORD=...
@@ -419,6 +405,17 @@ jobs:
         } else {
           Write-Host "Failed to generate signing secrets; skipping code signing"
         }
+
+        # Create a zip that contains an _msvc folder with the MSVC outputs and the linux-built bins
+        $tmp = Join-Path $PWD 'msvc_pkg_tmp'
+        if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
+        New-Item -ItemType Directory -Path (Join-Path $tmp '_msvc') | Out-Null
+        copy release\dse.dll (Join-Path $tmp '_msvc\dse.dll')
+        copy release\dse_kvc.dll (Join-Path $tmp '_msvc\dse_kvc.dll')
+        $zipPath = Join-Path $PWD 'release\dse_msvc.zip'
+        if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+        Compress-Archive -Path (Join-Path $tmp '*') -DestinationPath $zipPath
+        Remove-Item -Recurse -Force $tmp
 
     - name: Upload MSVC artifacts
       uses: actions/upload-artifact@v4
