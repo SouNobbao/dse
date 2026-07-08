@@ -1,8 +1,8 @@
-$ErrorActionPreference = 'Stop'
-
 param(
     [switch]$EmitEnvToStdout
 )
+
+$ErrorActionPreference = 'Stop'
 
 $CertSubject = 'CN=DS E Test Signing'
 $CertFriendlyName = 'DSE Test Signing'
