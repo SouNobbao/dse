@@ -160,7 +160,7 @@ jobs:
         clang++ --target=x86_64-w64-mingw32 -Oz -mwindows -municode -static -x c++ -fuse-ld=lld -ffunction-sections -fdata-sections -flto=thin -Wl,--gc-sections -Wl,--strip-all elevator.cpp -lshell32 -lshlwapi -o bins/dse_elevator.exe
 
         # Configure and build with CMake (produces dse.dll and dse_kvc.dll)
-        cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+        cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_C_COMPILER=x86_64-w64-mingw32-clang -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-clang++
         cmake --build build -- -j $(nproc)
 
         # Build pefile with clang++ (keeps parity with previous workflow)
