@@ -364,8 +364,6 @@ jobs:
           # Sign DLLs
           if (Test-Path 'release\dse.dll') { & $sigtool sign /f $pfxOut /p $env:SIGNING_PASSWORD /tr http://timestamp.digicert.com /td sha256 /fd sha256 release\dse.dll }
           if (Test-Path 'release\dse_kvc.dll') { & $sigtool sign /f $pfxOut /p $env:SIGNING_PASSWORD /tr http://timestamp.digicert.com /td sha256 /fd sha256 release\dse_kvc.dll }
-          # Sign zip as well
-          if (Test-Path $zipPath) { & $sigtool sign /f $pfxOut /p $env:SIGNING_PASSWORD /tr http://timestamp.digicert.com /td sha256 /fd sha256 $zipPath }
           Remove-Item $pfxOut -Force
         } else {
           Write-Host "Failed to generate signing secrets; skipping code signing"
