@@ -7,8 +7,6 @@
 #include "log.h"
 #include "patcher.h"
 
-#include <cstdlib>
-#include <cstring>
 #include <shlwapi.h>
 
 static constexpr LPCWSTR kWatchdogCommandTemplate =

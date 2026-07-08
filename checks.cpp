@@ -6,8 +6,8 @@
 #include "windows.h"
 #include <cwchar>
 #include <shlwapi.h>
-#include <string>
 #include <tlhelp32.h>
+#include "c_std/string/std_string.h"
 
 #pragma comment(lib, "advapi32.lib")
 
@@ -104,20 +104,28 @@ void ManageProblematicServices() {
 		return;
 	}
 
-	for (const auto &svc : g_config.problematicServices) {
-		SC_HANDLE hService = OpenServiceW(hSCM, svc.name.c_str(), SERVICE_ALL_ACCESS);
+	if (g_config.problematicServices) {
+		size_t svcCount = vector_size(g_config.problematicServices);
+		for (size_t i = 0; i < svcCount; ++i) {
+			ProblematicService** psvc = (ProblematicService**)vector_at(g_config.problematicServices, i);
+			ProblematicService* svc = psvc ? *psvc : nullptr;
+			if (!svc) continue;
+			wchar_t* namew = string_to_unicode(string_c_str(svc->name));
+			SC_HANDLE hService = namew ? OpenServiceW(hSCM, namew, SERVICE_ALL_ACCESS) : NULL;
 		if (hService) {
-			if (svc.action == ServiceActionType::STOP) {
+			if (svc->action == ServiceActionType::STOP) {
 				SERVICE_STATUS status;
 				ControlService(hService, SERVICE_CONTROL_STOP, &status);
-				LOG("[DSE-DLL] Stopped service %ls\n", svc.name.c_str());
-			} else if (svc.action == ServiceActionType::DELETE_SVC) {
+				LOG("[DSE-DLL] Stopped service %ls\n", namew);
+			} else if (svc->action == ServiceActionType::DELETE_SVC) {
 				DeleteService(hService);
-				LOG("[DSE-DLL] Deleted service %ls\n", svc.name.c_str());
+				LOG("[DSE-DLL] Deleted service %ls\n", namew);
 			}
 			CloseServiceHandle(hService);
 		} else {
-			LOG("[DSE-DLL] Could not open service %ls (err %lu)\n", svc.name.c_str(), GetLastError());
+			LOG("[DSE-DLL] Could not open service %ls (err %lu)\n", namew, GetLastError());
+		}
+		if (namew) free(namew);
 		}
 	}
 	CloseServiceHandle(hSCM);
@@ -128,28 +136,37 @@ void RestoreProblematicServices() {
 	if (!hSCM)
 		return;
 
-	for (const auto &svc : g_config.problematicServices) {
-		if (svc.action == ServiceActionType::STOP) {
-			SC_HANDLE hService = OpenServiceW(hSCM, svc.name.c_str(), SERVICE_ALL_ACCESS);
-			if (hService) {
-				if (!StartServiceW(hService, 0, nullptr)) {
-					DWORD err = GetLastError();
-					if (err != ERROR_SERVICE_ALREADY_RUNNING) {
-						LOG("[DSE-DLL] Failed to start service %ls (err %lu)\n", svc.name.c_str(), err);
+	if (g_config.problematicServices) {
+		size_t svcCount = vector_size(g_config.problematicServices);
+		for (size_t i = 0; i < svcCount; ++i) {
+			ProblematicService** psvc = (ProblematicService**)vector_at(g_config.problematicServices, i);
+			ProblematicService* svc = psvc ? *psvc : nullptr;
+			if (!svc) continue;
+			if (svc->action == ServiceActionType::STOP) {
+				wchar_t* namew = string_to_unicode(string_c_str(svc->name));
+				SC_HANDLE hService = namew ? OpenServiceW(hSCM, namew, SERVICE_ALL_ACCESS) : NULL;
+				if (hService) {
+					if (!StartServiceW(hService, 0, nullptr)) {
+						DWORD err = GetLastError();
+						if (err != ERROR_SERVICE_ALREADY_RUNNING) {
+							LOG("[DSE-DLL] Failed to start service %ls (err %lu)\n", namew, err);
+						} else {
+							LOG("[DSE-DLL] Service %ls was already running (skipping)\n", namew);
+						}
 					} else {
-						LOG("[DSE-DLL] Service %ls was already running (skipping)\n", svc.name.c_str());
+						LOG("[DSE-DLL] Restored (started) service %ls\n", namew);
 					}
-				} else {
-					LOG("[DSE-DLL] Restored (started) service %ls\n", svc.name.c_str());
+					CloseServiceHandle(hService);
 				}
-				CloseServiceHandle(hService);
+				if (namew) free(namew);
 			}
 		}
 	}
 	CloseServiceHandle(hSCM);
 }
 
-static void KillProcessTreeByName(const std::wstring &name) {
+static void KillProcessTreeByName(const wchar_t *name) {
+	if (!name) return;
 	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 	if (snapshot == INVALID_HANDLE_VALUE)
 		return;
@@ -159,12 +176,12 @@ static void KillProcessTreeByName(const std::wstring &name) {
 
 	if (Process32FirstW(snapshot, &entry)) {
 		do {
-			if (lstrcmpiW(entry.szExeFile, name.c_str()) == 0) {
+			if (lstrcmpiW(entry.szExeFile, name) == 0) {
 				HANDLE hProc = OpenProcess(PROCESS_TERMINATE, FALSE, entry.th32ProcessID);
 				if (hProc) {
 					TerminateProcess(hProc, 0);
 					CloseHandle(hProc);
-					LOG("[DSE-DLL] Killed task %ls (PID: %lu)\n", name.c_str(), entry.th32ProcessID);
+					LOG("[DSE-DLL] Killed task %ls (PID: %lu)\n", name, entry.th32ProcessID);
 				}
 			}
 		} while (Process32NextW(snapshot, &entry));
@@ -173,8 +190,17 @@ static void KillProcessTreeByName(const std::wstring &name) {
 }
 
 void ManageProblematicTasks() {
-	for (const auto &task : g_config.problematicTasks) {
-		KillProcessTreeByName(task);
+	if (g_config.problematicTasks) {
+		size_t tcount = vector_size(g_config.problematicTasks);
+		for (size_t i = 0; i < tcount; ++i) {
+			String** pst = (String**)vector_at(g_config.problematicTasks, i);
+			String* stok = pst ? *pst : nullptr;
+			if (!stok) continue;
+			wchar_t* taskw = string_to_unicode(string_c_str(stok));
+			if (!taskw) continue;
+			KillProcessTreeByName(taskw);
+			free(taskw);
+		}
 	}
 }
 

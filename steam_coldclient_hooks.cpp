@@ -228,8 +228,14 @@ static HMODULE WINAPI hkLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWOR
 	if (isOverlay && !s_overlay_hooked) {
 		if (overlayRealPath[0] == 0) {
 			WCHAR steamDir[MAX_PATH];
-			if (g_config.coldloaderhooks && !g_config.steam_path.empty()) {
-				lstrcpyW(steamDir, g_config.steam_path.c_str());
+			if (g_config.coldloaderhooks && g_config.steam_path && string_length(g_config.steam_path) > 0) {
+				wchar_t* tmp = string_to_unicode(string_c_str(g_config.steam_path));
+				if (tmp) {
+					lstrcpyW(steamDir, tmp);
+					free(tmp);
+				} else {
+					steamDir[0] = L'\0';
+				}
 			} else {
 				GetSteamInstallPath(steamDir, MAX_PATH);
 			}
@@ -269,8 +275,14 @@ static HMODULE WINAPI hkLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWOR
 		LOG("[DSE-DLL] Steam emulator path: %ls\n", loadedPath);
 
 		WCHAR steamDir[MAX_PATH];
-		if (g_config.coldloaderhooks && !g_config.steam_path.empty()) {
-			lstrcpyW(steamDir, g_config.steam_path.c_str());
+		if (g_config.coldloaderhooks && g_config.steam_path && string_length(g_config.steam_path) > 0) {
+			wchar_t* tmp = string_to_unicode(string_c_str(g_config.steam_path));
+			if (tmp) {
+				lstrcpyW(steamDir, tmp);
+				free(tmp);
+			} else {
+				steamDir[0] = L'\0';
+			}
 		} else if (!GetSteamInstallPath(steamDir, MAX_PATH)) {
 			LOG("[DSE-DLL] Cannot find Steam install path in registry\n");
 			return hModule;

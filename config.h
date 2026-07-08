@@ -2,7 +2,8 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <string>
-#include <vector>
+#include "c_std/vector/vector.h"
+#include "c_std/string/std_string.h"
 #include <windows.h>
 
 enum class ServiceActionType {
@@ -11,7 +12,7 @@ enum class ServiceActionType {
 };
 
 struct ProblematicService {
-	std::wstring name;
+	String* name; // UTF-8 String*
 	ServiceActionType action;
 };
 
@@ -20,11 +21,11 @@ struct DseConfig {
 	bool steamHooks;
 	bool reloaded;
 	bool coldloaderhooks;
-	std::wstring steam_path;
+	String* steam_path;
 
 	bool logging;
-	std::vector<ProblematicService> problematicServices;
-	std::vector<std::wstring> problematicTasks;
+	Vector* problematicServices; // stores ProblematicService*
+	Vector* problematicTasks;    // stores String*
 };
 
 extern DseConfig g_config;

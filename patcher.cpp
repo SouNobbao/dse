@@ -9,12 +9,9 @@
 #endif
 
 #include "afterburner.h"
-#include "checks.h"
 #include "log.h"
 
-#include <cassert>
-#include <cstdio>
-#include <cstring>
+#include <stdio.h>
 #include <processthreadsapi.h>
 #include <shlwapi.h>
 #include <winnt.h>
@@ -56,7 +53,6 @@ void EnsurePatcherExtracted() {
 		FILE *file = _wfopen(patcherPath, L"wb");
 		if (file) {
 			size_t written = fwrite(bin_patcher, 1, bin_patcher_len, file);
-			assert(written == bin_patcher_len);
 			fclose(file);
 		}
 	}

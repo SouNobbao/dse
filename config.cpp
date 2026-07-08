@@ -3,11 +3,14 @@
 #include "common.h"
 
 #include <cstdio>
+#include <wchar.h>
+#include <wctype.h>
 #include <shlwapi.h>
+#include "c_std/string/std_string.h"
 
 #pragma comment(lib, "shlwapi.lib")
 
-DseConfig g_config = {true, false, false, false, L"", false, {}, {}};
+DseConfig g_config = {true, false, false, false, nullptr, false, nullptr, nullptr};
 
 static bool ReadIniBool(LPCWSTR section, LPCWSTR key, bool defaultVal,
 						LPCWSTR iniPath) {
@@ -23,26 +26,22 @@ static bool ReadIniBool(LPCWSTR section, LPCWSTR key, bool defaultVal,
 	return defaultVal;
 }
 
-static void ReadIniStringList(LPCWSTR section, LPCWSTR key, LPCWSTR iniPath, std::vector<std::wstring> &outList) {
+static void ReadIniStringList(LPCWSTR section, LPCWSTR key, LPCWSTR iniPath, Vector* outList) {
 	WCHAR buf[1024]{};
 	GetPrivateProfileStringW(section, key, L"", buf, ARRAYSIZE(buf), iniPath);
-
-	std::wstring s(buf);
-	size_t pos = 0;
-	while ((pos = s.find(L',')) != std::wstring::npos) {
-		std::wstring token = s.substr(0, pos);
-		token.erase(0, token.find_first_not_of(L" \t\r\n"));
-		token.erase(token.find_last_not_of(L" \t\r\n") + 1);
-		if (!token.empty())
-			outList.push_back(token);
-		s.erase(0, pos + 1);
+	WCHAR *ctx = nullptr;
+	WCHAR *tok = wcstok(buf, L",", &ctx);
+	while (tok) {
+		WCHAR *start = tok;
+		while (*start && iswspace((wint_t)*start)) start++;
+		WCHAR *end = start + wcslen(start);
+		while (end > start && iswspace((wint_t)*(end - 1))) *(--end) = L'\0';
+		if (*start) {
+			String* str = string_from_unicode(start);
+			vector_push_back(outList, &str);
+		}
+		tok = wcstok(nullptr, L",", &ctx);
 	}
-	s.erase(0, s.find_first_not_of(L" \t\r\n"));
-	size_t last = s.find_last_not_of(L" \t\r\n");
-	if (last != std::wstring::npos)
-		s.erase(last + 1);
-	if (!s.empty())
-		outList.push_back(s);
 }
 
 static void GetDseIniPath(HMODULE hModule, WCHAR *outPath, DWORD maxLen) {
@@ -86,36 +85,65 @@ void LoadDseConfig(HMODULE hModule) {
 
 	WCHAR pathBuf[MAX_PATH]{};
 	GetPrivateProfileStringW(L"dse", L"steam_path", L"", pathBuf, ARRAYSIZE(pathBuf), iniPath);
-	g_config.steam_path = pathBuf;
+	if (pathBuf[0]) {
+		String* tmpPath = string_from_unicode(pathBuf);
+		g_config.steam_path = tmpPath;
+	}
 
 	g_config.reloaded = ReadIniBool(L"dse", L"reloaded", false, iniPath);
 	g_config.logging = ReadIniBool(L"dse", L"logging", false, iniPath);
 
-	std::vector<std::wstring> rawServices;
+	Vector* rawServices = vector_create(sizeof(String*));
 	ReadIniStringList(L"dse", L"problematic_services", iniPath, rawServices);
-	for (const auto &svc : rawServices) {
-		size_t colon = svc.find(L':');
-		if (colon != std::wstring::npos) {
-			std::wstring name = svc.substr(0, colon);
-			std::wstring actionStr = svc.substr(colon + 1);
-
-			name.erase(0, name.find_first_not_of(L" \t\r\n"));
-			size_t nameLast = name.find_last_not_of(L" \t\r\n");
-			if (nameLast != std::wstring::npos)
-				name.erase(nameLast + 1);
-
-			actionStr.erase(0, actionStr.find_first_not_of(L" \t\r\n"));
-			size_t actionLast = actionStr.find_last_not_of(L" \t\r\n");
-			if (actionLast != std::wstring::npos)
-				actionStr.erase(actionLast + 1);
-
-			ServiceActionType action = ServiceActionType::STOP;
-			if (_wcsicmp(actionStr.c_str(), L"DELETE") == 0) {
-				action = ServiceActionType::DELETE_SVC;
-			}
-			g_config.problematicServices.push_back({name, action});
+	size_t rawCount = vector_size(rawServices);
+	for (size_t ri = 0; ri < rawCount; ++ri) {
+		String** psvc = (String**)vector_at(rawServices, ri);
+		String* svcStr = psvc ? *psvc : nullptr;
+		if (!svcStr) continue;
+		wchar_t* svc_w = string_to_unicode(string_c_str(svcStr));
+		if (!svc_w) {
+			string_deallocate(svcStr);
+			continue;
 		}
-	}
 
+		wchar_t *colonPtr = wcschr(svc_w, L':');
+		if (colonPtr) {
+			size_t colonIndex = colonPtr - svc_w;
+			wchar_t *dup = _wcsdup(svc_w);
+			if (dup) {
+				dup[colonIndex] = L'\0';
+				wchar_t *nameStart = dup;
+				while (*nameStart && iswspace((wint_t)*nameStart)) nameStart++;
+				wchar_t *nameEnd = nameStart + wcslen(nameStart);
+				while (nameEnd > nameStart && iswspace((wint_t)*(nameEnd - 1))) *(--nameEnd) = L'\0';
+
+				wchar_t *actionStart = dup + colonIndex + 1;
+				while (*actionStart && iswspace((wint_t)*actionStart)) actionStart++;
+				wchar_t *actionEnd = actionStart + wcslen(actionStart);
+				while (actionEnd > actionStart && iswspace((wint_t)*(actionEnd - 1))) *(--actionEnd) = L'\0';
+
+				if (*nameStart) {
+					ServiceActionType action = ServiceActionType::STOP;
+					if (_wcsicmp(actionStart, L"DELETE") == 0) {
+						action = ServiceActionType::DELETE_SVC;
+					}
+					String* nameStr = string_from_unicode(nameStart);
+					ProblematicService* ps = new ProblematicService();
+					ps->name = nameStr;
+					ps->action = action;
+					if (!g_config.problematicServices)
+						g_config.problematicServices = vector_create(sizeof(ProblematicService*));
+					vector_push_back(g_config.problematicServices, &ps);
+				}
+				free(dup);
+			}
+		}
+		free(svc_w);
+		string_deallocate(svcStr);
+	}
+	vector_deallocate(rawServices);
+
+	if (!g_config.problematicTasks)
+		g_config.problematicTasks = vector_create(sizeof(String*));
 	ReadIniStringList(L"dse", L"problematic_tasks", iniPath, g_config.problematicTasks);
 }

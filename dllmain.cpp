@@ -1,4 +1,3 @@
-#include <cstdlib>
 #define WIN32_LEAN_AND_MEAN
 
 #include "afterburner.h"
@@ -13,7 +12,6 @@
 #include "patcher.h"
 #include "watchdog.h"
 
-#include <cstring>
 #include <shellapi.h>
 #include <shlwapi.h>
 #include <windows.h>
@@ -366,6 +364,41 @@ static void OnProcessDetach() {
 
 	if (g_config.toggleDse && !otherGameRunning) {
 		RestoreProblematicServices();
+	}
+	// Free config-owned strings and vectors
+	if (g_config.steam_path) {
+		string_deallocate(g_config.steam_path);
+		g_config.steam_path = nullptr;
+	}
+
+	if (g_config.problematicServices) {
+		size_t svcCount = vector_size(g_config.problematicServices);
+		for (size_t i = 0; i < svcCount; ++i) {
+			ProblematicService** pps = (ProblematicService**)vector_at(g_config.problematicServices, i);
+			ProblematicService* ps = pps ? *pps : nullptr;
+			if (ps) {
+				if (ps->name) {
+					string_deallocate(ps->name);
+					ps->name = nullptr;
+				}
+				delete ps;
+			}
+		}
+		vector_deallocate(g_config.problematicServices);
+		g_config.problematicServices = nullptr;
+	}
+
+	if (g_config.problematicTasks) {
+		size_t tCount = vector_size(g_config.problematicTasks);
+		for (size_t i = 0; i < tCount; ++i) {
+			String** pstr = (String**)vector_at(g_config.problematicTasks, i);
+			String* s = pstr ? *pstr : nullptr;
+			if (s) {
+				string_deallocate(s);
+			}
+		}
+		vector_deallocate(g_config.problematicTasks);
+		g_config.problematicTasks = nullptr;
 	}
 	LOG("[DSE-DLL] Uninitializing MinHook...\n");
 	MH_Uninitialize();

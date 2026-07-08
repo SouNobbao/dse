@@ -150,99 +150,21 @@ jobs:
           exit 1
         fi
 
-    - name: Build DLLs
+    - name: Build DLLs with CMake
       run: |
         set -euo pipefail
         mkdir -p build
         mkdir -p bins
 
+        # build elevator executable with clang (small standalone target)
         clang++ --target=x86_64-w64-mingw32 -Oz -mwindows -municode -static -x c++ -fuse-ld=lld -ffunction-sections -fdata-sections -flto=thin -Wl,--gc-sections -Wl,--strip-all elevator.cpp -lshell32 -lshlwapi -o bins/dse_elevator.exe
 
-        COMMON_FLAGS=(
-          --target=x86_64-w64-mingw32
-          -Oz
-          -mwindows
-          -municode
-          -shared
-          -static
-          -x
-          c++
-          -Wno-deprecated
-          -fuse-ld=lld
-          -Iminhook/include
-          -ffunction-sections
-          -fdata-sections
-          -flto=thin
-          -Wl,--gc-sections
-          -Wl,--icf=all
-          -fvisibility=hidden
-          -fno-unwind-tables
-          -fno-asynchronous-unwind-tables
-          -fno-exceptions
-          -fno-rtti
-          -Wl,--strip-all
-          -Wl,--build-id=none
-        )
+        # Configure and build with CMake (produces dse.dll and dse_kvc.dll)
+        cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release
+        cmake --build build -- -j $(nproc)
 
-        SOURCES=(
-          config.cpp
-          checks.cpp
-          dllmain.cpp
-          events.cpp
-          injector.cpp
-          patcher.cpp
-          log.cpp
-          watchdog.cpp
-          afterburner.cpp
-          hide_module.cpp
-          minhook/src/buffer.c
-          minhook/src/hook.c
-          minhook/src/trampoline.c
-          minhook/src/hde/hde64.c
-          minhook/src/hde/hde32.c
-        )
-
-        LIBS=(
-          -lshlwapi
-        )
-
-        PEFILE_FLAGS=(
-          --target=x86_64-w64-mingw32
-          -Oz
-          -mconsole
-          -static
-          -x
-          c++
-          -fuse-ld=lld
-          -Iminhook/include
-          -ffunction-sections
-          -fdata-sections
-          -flto=thin
-          -Wl,--gc-sections
-          -Wl,--icf=all
-          -fvisibility=hidden
-          -fno-unwind-tables
-          -fno-asynchronous-unwind-tables
-          -fno-exceptions
-          -fno-rtti
-          -Wl,--strip-all
-          -Wl,--build-id=none
-        )
-
-        clang++ "${COMMON_FLAGS[@]}" -D_STABLE "${SOURCES[@]}" "${LIBS[@]}" \
-          -o build/dse.dll &
-
-        clang++ "${COMMON_FLAGS[@]}" "${SOURCES[@]}" "${LIBS[@]}" \
-          -o build/dse_kvc.dll &
-
-        clang++ "${PEFILE_FLAGS[@]}" -o build/pefile.exe pefile/pefile.cpp pefile/main.cpp
-
-        wait
-        
-    - name: Compress DLLs with UPX
-      run: |
-        set -euo pipefail
-        upx --best --lzma build/*
+        # Build pefile with clang++ (keeps parity with previous workflow)
+        clang++ --target=x86_64-w64-mingw32 -Oz -mconsole -static -x c++ -fuse-ld=lld -Iminhook/include -ffunction-sections -fdata-sections -flto=thin -Wl,--gc-sections -Wl,--icf=all -fvisibility=hidden -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-exceptions -fno-rtti -Wl,--strip-all -Wl,--build-id=none -o build/pefile.exe pefile/pefile.cpp pefile/main.cpp
 
     - name: Copy extras to build
       run: cp -v extras/* build/

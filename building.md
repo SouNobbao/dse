@@ -21,11 +21,15 @@ Before building, ensure you have the necessary patcher binaries in `bins`
 > Use the `-D_STABLE` flag to build with **drvloader**. If omitted, it will build with **KVC**.
 
 ```bash
-clang++ --target=x86_64-w64-mingw32 -O3 -D_STABLE -Wno-deprecated -mwindows -municode -shared -static \
-    -Iminhook/include \
+clang++ --target=x86_64-w64-mingw32 -Oz -D_STABLE -Wno-deprecated -mwindows -municode -shared -static \
+    -Iminhook/include -I. \
+    -ffunction-sections -fdata-sections -fvisibility=hidden -fno-unwind-tables -fno-asynchronous-unwind-tables \
+    -fno-exceptions -fno-rtti -flto=thin \
     config.cpp checks.cpp dllmain.cpp events.cpp injector.cpp patcher.cpp log.cpp watchdog.cpp afterburner.cpp hide_module.cpp \
     minhook/src/buffer.c minhook/src/hook.c minhook/src/trampoline.c minhook/src/hde/hde64.c minhook/src/hde/hde32.c \
-    -lshlwapi -luser32 -lkernel32 -ladvapi32 -lshell32 -lole32 -loleaut32 \
+    c_std/vector/vector.c c_std/string/std_string.c \
+    -fuse-ld=lld -Wl,--gc-sections -Wl,--icf=all -Wl,--as-needed \
+    -lshlwapi \
     -o build/dse.dll
 ```
 

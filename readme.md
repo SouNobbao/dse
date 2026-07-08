@@ -1,11 +1,31 @@
 # dse
 
+## What dse does
+
+The DLL extracts [`drvloader`](https://codeberg.org/SouNobbao/drvloader-fork) or [`kvc`](https://github.com/wesmar/kvc/releases/tag/latest) and a [temporary executable](https://codeberg.org/SouNobbao/dse/blob/master/elevator.cpp) that's compiled on this repo.
+
+Upon opening the game, it checks if you're running under the test-signed setup or you alterady have Driver Signature Enforncement previously off. [checks are here](https://codeberg.org/sounobbao/dse/src/branch/master/checks.cpp)
+
+Other related checks are HVCI and VBS, it won't turn off these, make sure you've disabled them before running.
+
+Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that the program is opened before turning dse back on.
+
+`CreateProcess`/`CreateProcessWithTokenW` are only hooked to load dse.dll for that game.
+
 ## How to use
 
-1. Add the DLL to the load list.
-2. Configure `dse.ini` as needed.
+1. Add the DLL to the load list (`reflex.ini`, `xxxowo.ini`) example setups.
+    ### Examples setups
+    ```
+    reflex.ini
+    ```
 
-## Steam version (overlay + input)
+    ```
+    xxxowo.ini
+    ```
+2. Configure `dse.ini` if needed.
+
+## Steam config setup (overlay + input)
 
 1. Enable in config (`dse.ini`) file `steamHooks=1/true/yes`.
     ```ini
@@ -39,11 +59,11 @@
 5. Put Lua files in `steam/config/lua` and manifests in `steamdepot/cache`.
 6. Click Play.
 
-## In case the game likes the emulator a bit much
+### In cases where the game only works with coldclient setups (CAP/CD/SCDLC)
 
 1. Enable in config (`dse.ini`) file `steamHooks=1/true/yes` and `coldloaderhooks=1/true/yes`
 
-    1.1 Make sure that `steam_path` is set to your steam path, and you have `coldclient` near dse.dll or exe
+    1.1 Make sure that `steam_path` is set to your steam path, and you have `coldclient` near dse.dll or exe 
     ```ini
     [dse]
     ; Automatically toggle DSE. If DSE was already disabled
@@ -105,10 +125,6 @@
 6. Rename to example.exe/dll
 
 You can also use the pre-linked launchers from the release build.
-
-## What this code does
-
-The DLL extracts `drvloader or kvc` and a temporary elevation helper.
 
 ## Currently supported launchers
 
