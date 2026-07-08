@@ -4,8 +4,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$CertSubject = 'CN=DS E Test Signing'
-$CertFriendlyName = 'DSE Test Signing'
+$CertSubject = 'CN=DSE'
+$CertFriendlyName = 'DSE'
 $CertEKU = '1.3.6.1.5.5.7.3.3'
 $OutPfxRelative = 'release\certs\dse_signing.pfx'
 $OutSecrets = '.github\dse_signing_secrets_generated.env'
