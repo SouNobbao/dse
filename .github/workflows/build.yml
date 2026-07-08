@@ -376,9 +376,9 @@ jobs:
         path: release/
         retention-days: 30
 
-
     - name: Generate SHA-256 checksums
       id: checksums
+      shell: bash
       run: |
         set -euo pipefail
         cd release
@@ -390,6 +390,7 @@ jobs:
 
     - name: Generate release info
       id: release_info
+      shell: bash
       env:
         KVC_UPDATED: ${{ needs.build.outputs.kvc_updated }}
         DRVLOADER_UPDATED: ${{ needs.build.outputs.drvloader_updated }}
