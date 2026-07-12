@@ -223,7 +223,7 @@ HWND WINAPI HookedCreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName,
 										dwStyle, X, Y, nWidth, nHeight,
 										hWndParent, hMenu, hInstance, lpParam);
 
-	bool s_dseRestored = false;
+	static bool s_dseRestored = false;
 	if (!s_dseRestored && g_config.toggleDse && !g_wasOffFromStart && !g_isLauncher && hwnd != nullptr) {
 		s_dseRestored = true;
 		if (g_wasToggled) {
