@@ -18,10 +18,10 @@
 
 #pragma comment(lib, "shlwapi.lib")
 
-static WCHAR g_targetExe[MAX_PATH] = {0};
-static bool g_wasOffFromStart = false;
-static bool g_wasToggled = false;
-static bool g_isLauncher = false;
+WCHAR g_targetExe[MAX_PATH] = {0};
+bool g_wasOffFromStart = false;
+bool g_wasToggled = false;
+bool g_isLauncher = false;
 
 extern "C" __declspec(dllexport) void DseDll(void) {}
 
@@ -34,7 +34,7 @@ HMODULE g_hModule = nullptr;
 
 #include "elevator_bin.cpp"
 
-static void RelaunchElevatedAndExit() {
+void RelaunchElevatedAndExit() {
 	LOG("[DSE-DLL] Not admin elevating, spawning dse_elevator.exe ...\n");
 
 	WCHAR exePath[MAX_PATH]{};
@@ -89,13 +89,13 @@ pCreateProcessW_t OriginalCreateProcessW = nullptr;
 typedef HWND(WINAPI *pCreateWindowExW)(DWORD, LPCWSTR, LPCWSTR, DWORD, int, int,
 									   int, int, HWND, HMENU, HINSTANCE,
 									   LPVOID);
-static pCreateWindowExW OriginalCreateWindowExW = nullptr;
+pCreateWindowExW OriginalCreateWindowExW = nullptr;
 
 typedef BOOL(WINAPI *pCreateProcessWithTokenW)(HANDLE, DWORD, LPCWSTR, LPWSTR,
 											   DWORD, LPVOID, LPCWSTR,
 											   LPSTARTUPINFOW,
 											   LPPROCESS_INFORMATION);
-static pCreateProcessWithTokenW OriginalCreateProcessWithTokenW = nullptr;
+pCreateProcessWithTokenW OriginalCreateProcessWithTokenW = nullptr;
 
 BOOL WINAPI HookedCreateProcessW(
 	LPCWSTR lpApplicationName, LPWSTR lpCommandLine,
@@ -111,7 +111,7 @@ BOOL WINAPI HookedCreateProcessW(
 			lpCurrentDirectory, lpStartupInfo, lpProcessInformation);
 	};
 
-	static WCHAR s_gameDir[MAX_PATH]{};
+	WCHAR s_gameDir[MAX_PATH]{};
 	if (GetModuleFileNameW(nullptr, s_gameDir, MAX_PATH)) {
 		PathRemoveFileSpecW(s_gameDir);
 		PathAddBackslashW(s_gameDir);
@@ -223,7 +223,7 @@ HWND WINAPI HookedCreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName,
 										dwStyle, X, Y, nWidth, nHeight,
 										hWndParent, hMenu, hInstance, lpParam);
 
-	static bool s_dseRestored = false;
+	bool s_dseRestored = false;
 	if (!s_dseRestored && g_config.toggleDse && !g_wasOffFromStart && !g_isLauncher && hwnd != nullptr) {
 		s_dseRestored = true;
 		if (g_wasToggled) {
@@ -236,7 +236,7 @@ HWND WINAPI HookedCreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName,
 	return hwnd;
 }
 
-static void InitializeHooks() {
+void InitializeHooks() {
 	LOG("[DSE-DLL] Initializing MinHook...\n");
 	if (MH_Initialize() != MH_OK) {
 		LOG("[DSE-DLL] MinHook init failed!\n");
@@ -259,7 +259,7 @@ static void InitializeHooks() {
 	LOG("[DSE-DLL] Hooks installed\n");
 }
 
-static void OnProcessAttach(HMODULE hModule) {
+void OnProcessAttach(HMODULE hModule) {
 	DisableThreadLibraryCalls(hModule);
 	g_hModule = hModule;
 
@@ -338,7 +338,7 @@ static void OnProcessAttach(HMODULE hModule) {
 	}
 }
 
-static void OnProcessDetach() {
+void OnProcessDetach() {
 	WCHAR hostPath[MAX_PATH]{};
 	if (GetModuleFileNameW(nullptr, hostPath, MAX_PATH) && IsPassthroughExe(PathFindFileNameW(hostPath))) {
 		return;
@@ -411,10 +411,11 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
 					  LPVOID lpReserved) {
 	(void)lpReserved;
 
-	if (ul_reason_for_call == DLL_PROCESS_ATTACH)
+	if (ul_reason_for_call == DLL_PROCESS_ATTACH){
 		OnProcessAttach(hModule);
-	else if (ul_reason_for_call == DLL_PROCESS_DETACH)
+	} else if (ul_reason_for_call == DLL_PROCESS_DETACH) {
 		OnProcessDetach();
+	}
 
 	return TRUE;
 }

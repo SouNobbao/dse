@@ -6,20 +6,17 @@
 
 extern HMODULE g_hModule;
 
-static constexpr LPCWSTR kDseIniName = L"dse.ini";
-static constexpr LPCWSTR kPatcherName = L"dse_patcher.exe";
-static constexpr LPCWSTR kLockFileName = L"dse_off_from_start.lock";
-static constexpr LPCWSTR kToggledLockFileName = L"dse_toggled.lock";
-static constexpr LPCWSTR kElevationScriptName = L"dse_elev.ps1";
+constexpr LPCWSTR kDseIniName = L"dse.ini";
+constexpr LPCWSTR kPatcherName = L"dse_patcher.exe";
+constexpr LPCWSTR kLockFileName = L"dse_off_from_start.lock";
+constexpr LPCWSTR kToggledLockFileName = L"dse_toggled.lock";
+constexpr LPCWSTR kElevationScriptName = L"dse_elev.ps1";
 
-static constexpr LPCWSTR kElevationPs1Template =
-	L"Start-Process -FilePath \"%s\" -ArgumentList \"%s\" -WorkingDirectory \"%s\" -Verb RunAs\r\n";
-
-static inline bool IsPassthroughExe(LPCWSTR exeName) {
+inline bool IsPassthroughExe(LPCWSTR exeName) {
     if (!exeName) return false;
-    return StrStrIW(exeName, L"drvloader")   != nullptr ||
+    return StrStrIW(exeName, L"watchdog.exe") ||
+           StrStrIW(exeName, L"drvloader")   != nullptr ||
            StrStrIW(exeName, L"crashpad_handler") != nullptr ||
-           StrStrIW(exeName, L"watchdog")     != nullptr ||
            StrStrIW(exeName, L"rundll32")     != nullptr ||
            StrStrIW(exeName, L"wmic")         != nullptr ||
            StrStrIW(exeName, L"crs-handler")  != nullptr ||

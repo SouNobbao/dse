@@ -81,6 +81,7 @@ if(MSVC)
         /GF
         /GS-
         /fp:fast
+        /MT
         /W3
         $<$<COMPILE_LANGUAGE:CXX>:/permissive->
     )
