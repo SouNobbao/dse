@@ -18,10 +18,10 @@
 
 #pragma comment(lib, "shlwapi.lib")
 
-WCHAR g_targetExe[MAX_PATH] = {0};
-bool g_wasOffFromStart = false;
-bool g_wasToggled = false;
-bool g_isLauncher = false;
+static WCHAR g_targetExe[MAX_PATH] = {0};
+static bool g_wasOffFromStart = false;
+static bool g_wasToggled = false;
+static bool g_isLauncher = false;
 
 extern "C" __declspec(dllexport) void DseDll(void) {}
 
@@ -34,7 +34,7 @@ HMODULE g_hModule = nullptr;
 
 #include "elevator_bin.cpp"
 
-void RelaunchElevatedAndExit() {
+static void RelaunchElevatedAndExit() {
 	LOG("[DSE-DLL] Not admin elevating, spawning dse_elevator.exe ...\n");
 
 	WCHAR exePath[MAX_PATH]{};
@@ -89,13 +89,13 @@ pCreateProcessW_t OriginalCreateProcessW = nullptr;
 typedef HWND(WINAPI *pCreateWindowExW)(DWORD, LPCWSTR, LPCWSTR, DWORD, int, int,
 									   int, int, HWND, HMENU, HINSTANCE,
 									   LPVOID);
-pCreateWindowExW OriginalCreateWindowExW = nullptr;
+static pCreateWindowExW OriginalCreateWindowExW = nullptr;
 
 typedef BOOL(WINAPI *pCreateProcessWithTokenW)(HANDLE, DWORD, LPCWSTR, LPWSTR,
 											   DWORD, LPVOID, LPCWSTR,
 											   LPSTARTUPINFOW,
 											   LPPROCESS_INFORMATION);
-pCreateProcessWithTokenW OriginalCreateProcessWithTokenW = nullptr;
+static pCreateProcessWithTokenW OriginalCreateProcessWithTokenW = nullptr;
 
 BOOL WINAPI HookedCreateProcessW(
 	LPCWSTR lpApplicationName, LPWSTR lpCommandLine,
@@ -111,7 +111,7 @@ BOOL WINAPI HookedCreateProcessW(
 			lpCurrentDirectory, lpStartupInfo, lpProcessInformation);
 	};
 
-	WCHAR s_gameDir[MAX_PATH]{};
+	static WCHAR s_gameDir[MAX_PATH]{};
 	if (GetModuleFileNameW(nullptr, s_gameDir, MAX_PATH)) {
 		PathRemoveFileSpecW(s_gameDir);
 		PathAddBackslashW(s_gameDir);
@@ -236,7 +236,7 @@ HWND WINAPI HookedCreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName,
 	return hwnd;
 }
 
-void InitializeHooks() {
+static void InitializeHooks() {
 	LOG("[DSE-DLL] Initializing MinHook...\n");
 	if (MH_Initialize() != MH_OK) {
 		LOG("[DSE-DLL] MinHook init failed!\n");
@@ -259,7 +259,7 @@ void InitializeHooks() {
 	LOG("[DSE-DLL] Hooks installed\n");
 }
 
-void OnProcessAttach(HMODULE hModule) {
+static void OnProcessAttach(HMODULE hModule) {
 	DisableThreadLibraryCalls(hModule);
 	g_hModule = hModule;
 
@@ -338,7 +338,7 @@ void OnProcessAttach(HMODULE hModule) {
 	}
 }
 
-void OnProcessDetach() {
+static void OnProcessDetach() {
 	WCHAR hostPath[MAX_PATH]{};
 	if (GetModuleFileNameW(nullptr, hostPath, MAX_PATH) && IsPassthroughExe(PathFindFileNameW(hostPath))) {
 		return;
@@ -365,7 +365,7 @@ void OnProcessDetach() {
 	if (g_config.toggleDse && !otherGameRunning) {
 		RestoreProblematicServices();
 	}
-	// Free config-owned strings and vectors
+
 	if (g_config.steam_path) {
 		string_deallocate(g_config.steam_path);
 		g_config.steam_path = nullptr;
@@ -411,11 +411,10 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
 					  LPVOID lpReserved) {
 	(void)lpReserved;
 
-	if (ul_reason_for_call == DLL_PROCESS_ATTACH){
+	if (ul_reason_for_call == DLL_PROCESS_ATTACH)
 		OnProcessAttach(hModule);
-	} else if (ul_reason_for_call == DLL_PROCESS_DETACH) {
+	else if (ul_reason_for_call == DLL_PROCESS_DETACH)
 		OnProcessDetach();
-	}
 
 	return TRUE;
 }
