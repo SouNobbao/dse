@@ -18,10 +18,14 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
     ### Examples setups
     ```
     reflex.ini
+    [load_dlls]
+    0=dse.ini
     ```
 
     ```
     xxxowo.ini
+    [LoadDlls]
+    0=dse.ini
     ```
 2. Configure `dse.ini` if needed.
 

@@ -33,25 +33,6 @@ set(SOURCES
 add_library(dse SHARED ${SOURCES})
 add_library(dse_kvc SHARED ${SOURCES})
 
-target_include_directories(dse PRIVATE minhook/include)
-target_include_directories(dse PRIVATE ${CMAKE_SOURCE_DIR})
-target_include_directories(dse_kvc PRIVATE minhook/include)
-target_include_directories(dse_kvc PRIVATE ${CMAKE_SOURCE_DIR})
-
-set_target_properties(dse PROPERTIES PREFIX "")
-set_target_properties(dse_kvc PROPERTIES PREFIX "")
-
-target_compile_definitions(dse PRIVATE
-    _STABLE
-    UNICODE
-    _UNICODE
-)
-
-target_compile_definitions(dse_kvc PRIVATE
-    UNICODE
-    _UNICODE
-)
-
 # Ensure C sources are compiled as C when using MSVC
 if(MSVC)
     set_source_files_properties(
@@ -64,35 +45,31 @@ if(MSVC)
         c_std/string/std_string.c
         PROPERTIES LANGUAGE C
     )
-endif()
 
-if(MSVC)
-    # MSVC-specific compile options
-    set(MSVC_COMPILE_OPTIONS
+    set(COMPILER_OPTIONS
         /utf-8
         /MP
         /O2
         /Ob3
-        /Oi
-        /Ot
         /GL
-        /Gy
         /Gw
-        /GF
         /GS-
         /fp:fast
         /MT
         /W3
         $<$<COMPILE_LANGUAGE:CXX>:/permissive->
     )
-
-    target_compile_options(dse PRIVATE ${MSVC_COMPILE_OPTIONS})
-    target_compile_options(dse_kvc PRIVATE ${MSVC_COMPILE_OPTIONS})
-    # Define target architecture macros for non-standard MSVC env setups
-    target_compile_definitions(dse PRIVATE _M_X64 _AMD64_)
-    target_compile_definitions(dse_kvc PRIVATE _M_X64 _AMD64_)
+    
+    set(LINKER_OPTIONS
+        /LTCG
+        /OPT:REF
+        /OPT:ICF=3
+        /INCREMENTAL:NO
+        /DEBUG:NONE
+        /MERGE:.rdata=.text
+    )
 else()
-    set(COMMON_COMPILE_OPTIONS
+    set(COMPILER_OPTIONS
         -Oz
         -Wno-deprecated
         -ffunction-sections
@@ -103,24 +80,7 @@ else()
         $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti>
     )
 
-    target_compile_options(dse PRIVATE ${COMMON_COMPILE_OPTIONS})
-    target_compile_options(dse_kvc PRIVATE ${COMMON_COMPILE_OPTIONS})
-endif()
-
-if(MSVC)
-    set(MSVC_LINK_OPTIONS
-        /LTCG
-        /OPT:REF
-        /OPT:ICF=3
-        /INCREMENTAL:NO
-        /DEBUG:NONE
-        /MERGE:.rdata=.text
-    )
-
-    target_link_options(dse PRIVATE ${MSVC_LINK_OPTIONS})
-    target_link_options(dse_kvc PRIVATE ${MSVC_LINK_OPTIONS})
-else()
-    set(COMMON_LINK_OPTIONS
+    set(LINKER_OPTIONS
         -Oz
         -static
         -mwindows
@@ -131,17 +91,23 @@ else()
         -Wl,--strip-all
         -Wl,--build-id=none
         -Wl,--as-needed
+        -Wl,--kill-at
         -flto=thin
     )
-
-    target_link_options(dse PRIVATE ${COMMON_LINK_OPTIONS})
-    target_link_options(dse_kvc PRIVATE ${COMMON_LINK_OPTIONS})
 endif()
 
-target_link_libraries(dse PRIVATE
-    shlwapi
-)
+foreach(TARGET dse dse_kvc)
+    target_include_directories(${TARGET} PRIVATE minhook/include ${CMAKE_SOURCE_DIR})
+    set_target_properties(${TARGET} PROPERTIES PREFIX "")
+    target_compile_definitions(${TARGET} PRIVATE UNICODE _UNICODE)
+    target_link_libraries(${TARGET} PRIVATE shlwapi)
 
-target_link_libraries(dse_kvc PRIVATE
-    shlwapi
-)
+    target_compile_options(${TARGET} PRIVATE ${COMPILER_OPTIONS})
+    target_link_options(${TARGET} PRIVATE ${LINKER_OPTIONS})
+
+    if(MSVC)
+        target_compile_definitions(${TARGET} PRIVATE _M_X64 _AMD64_)
+    endif()
+endforeach()
+
+target_compile_definitions(dse PRIVATE _STABLE)
