@@ -19,13 +19,13 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
     ```
     reflex.ini
     [load_dlls]
-    0=dse.ini
+    0=dse.dll
     ```
 
     ```
     xxxowo.ini
     [LoadDlls]
-    0=dse.ini
+    0=dse.dll
     ```
 2. Configure `dse.ini` if needed.
 
