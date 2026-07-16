@@ -10,12 +10,12 @@ Other related checks are HVCI and VBS, it won't turn off these, make sure you've
 
 Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that the program is opened before turning dse back on.
 
-`CreateProcess`/`CreateProcessWithTokenW` are only hooked to load dse.dll for that game.
+`CreateProcess`/`CreateProcessWithTokenW` are only hooked to load dse.dll for that game in case of a launcher.
 
 ## How to use
 
 1. Add the DLL to the load list (`reflex.ini`, `xxxowo.ini`) example setups.
-    ### Examples setups
+    ### Example setups
     ```
     reflex.ini
     [load_dlls]
