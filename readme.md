@@ -140,7 +140,7 @@ You can also use the pre-linked launchers from the release build.
 
 ## Disclaimer 
 
-You, as the user, are responsible for any misuse of this software. The authors condone the use of this software for any malicious purposes.
+You, as the user, you're responsible for any misuse of this software. The authors condone the use of this software for any malicious purposes.
 
 ### Issues
 
