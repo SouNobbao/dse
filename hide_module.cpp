@@ -40,8 +40,7 @@ int HideModule() {
 	PPEB_LDR_DATA_CUSTOM ldr = pPEB->Ldr;
 
 	LDR_DATA_TABLE_ENTRY_CUSTOM *self = NULL;
-	for (PLIST_ENTRY node = ldr->InLoadOrderModuleList.Flink;
-		 node != &ldr->InLoadOrderModuleList; node = node->Flink) {
+	for (PLIST_ENTRY node = ldr->InLoadOrderModuleList.Flink; node != &ldr->InLoadOrderModuleList; node = node->Flink) {
 		LDR_DATA_TABLE_ENTRY_CUSTOM *entry =
 			CONTAINING_RECORD(node, LDR_DATA_TABLE_ENTRY_CUSTOM, InLoadOrderLinks);
 		if (entry->DllBase == hModule) {

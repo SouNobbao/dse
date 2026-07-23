@@ -12,7 +12,7 @@ enum class ServiceActionType {
 };
 
 struct ProblematicService {
-	String* name; // UTF-8 String*
+	String* name;
 	ServiceActionType action;
 };
 
@@ -24,8 +24,8 @@ struct DseConfig {
 	String* steam_path;
 
 	bool logging;
-	Vector* problematicServices; // stores ProblematicService*
-	Vector* problematicTasks;    // stores String*
+	Vector* problematicServices;
+	Vector* problematicTasks;
 };
 
 extern DseConfig g_config;

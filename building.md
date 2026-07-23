@@ -7,7 +7,7 @@
 
 ## Preparation
 
-Before building, ensure you have the necessary patcher binaries in `bins`
+Before building, ensure you have the necessary binaries (used to patch and elevate process) in `bins`
 - `drvloader` is available [here](http://github.com/SouNobbao/drvloader-fork/releases/latest)
 - `kvc` is available [here](https://github.com/wesmar/kvc/releases/tag/latest)
 - `dse_elevator.exe` is compiled from `elevator.cpp`

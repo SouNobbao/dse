@@ -70,6 +70,7 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
 	if (wasToggled) {
 		CheckAndSetDseToggled();
 	}
+	// If dse was off open event up to avoid turning on dse
 	if (wasOffFromStart) {
 		CheckAndSetDseOffFromStart();
 	}

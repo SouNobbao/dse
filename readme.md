@@ -6,7 +6,7 @@ The DLL extracts [`drvloader`](https://codeberg.org/SouNobbao/drvloader-fork) or
 
 Upon opening the game, it checks if you're running under the test-signed setup or you alterady have Driver Signature Enforncement previously off. [checks are here](https://codeberg.org/sounobbao/dse/src/branch/master/checks.cpp)
 
-Other related checks are HVCI and VBS, it won't turn off these, make sure you've disabled them before running.
+Other related checks are HVCI/VBS, this tool won't turn off those, make sure you've disabled them before running.
 
 Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that the program is opened before turning dse back on.
 

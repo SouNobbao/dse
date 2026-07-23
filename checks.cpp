@@ -112,20 +112,20 @@ void ManageProblematicServices() {
 			if (!svc) continue;
 			wchar_t* namew = string_to_unicode(string_c_str(svc->name));
 			SC_HANDLE hService = namew ? OpenServiceW(hSCM, namew, SERVICE_ALL_ACCESS) : NULL;
-		if (hService) {
-			if (svc->action == ServiceActionType::STOP) {
-				SERVICE_STATUS status;
-				ControlService(hService, SERVICE_CONTROL_STOP, &status);
-				LOG("[DSE-DLL] Stopped service %ls\n", namew);
-			} else if (svc->action == ServiceActionType::DELETE_SVC) {
-				DeleteService(hService);
-				LOG("[DSE-DLL] Deleted service %ls\n", namew);
+			if (hService) {
+				if (svc->action == ServiceActionType::STOP) {
+					SERVICE_STATUS status;
+					ControlService(hService, SERVICE_CONTROL_STOP, &status);
+					LOG("[DSE-DLL] Stopped service %ls\n", namew);
+				} else if (svc->action == ServiceActionType::DELETE_SVC) {
+					DeleteService(hService);
+					LOG("[DSE-DLL] Deleted service %ls\n", namew);
+				}
+				CloseServiceHandle(hService);
+			} else {
+				LOG("[DSE-DLL] Could not open service %ls (err %lu)\n", namew, GetLastError());
 			}
-			CloseServiceHandle(hService);
-		} else {
-			LOG("[DSE-DLL] Could not open service %ls (err %lu)\n", namew, GetLastError());
-		}
-		if (namew) free(namew);
+			if (namew) free(namew);
 		}
 	}
 	CloseServiceHandle(hSCM);
@@ -205,7 +205,6 @@ void ManageProblematicTasks() {
 }
 
 void WaitForWatchdogToExit() {
-	// 1. Check for new watchdog mutex
 	HANDLE hMutex = OpenMutexW(SYNCHRONIZE, FALSE, L"Local\\DseDll_WatchdogAlive");
 	if (hMutex) {
 		LOG("[DSE-DLL] Watchdog mutex found, waiting...\n");

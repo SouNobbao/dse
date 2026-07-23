@@ -10,6 +10,7 @@
 
 #pragma comment(lib, "shlwapi.lib")
 
+// default config order
 DseConfig g_config = {true, false, false, false, nullptr, false, nullptr, nullptr};
 
 static bool ReadIniBool(LPCWSTR section, LPCWSTR key, bool defaultVal,
