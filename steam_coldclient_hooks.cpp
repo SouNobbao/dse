@@ -150,8 +150,10 @@ static int HookAllExports(HMODULE hSource, HMODULE hTarget) {
 	}
 
 	DWORD oldProt;
-	VirtualProtect(funcs, expDir->NumberOfFunctions * sizeof(DWORD), PAGE_READWRITE, &oldProt);
-
+	if (!VirtualProtect(funcs, expDir->NumberOfFunctions * sizeof(DWORD), PAGE_READWRITE, &oldProt)) {
+		LOG("[DSE-DLL] VirtualProtect on EAT failed: %lu\n", GetLastError());
+		return 0;
+	}
 	for (DWORD i = 0; i < expDir->NumberOfNames; i++) {
 		const char *name = (const char *)((BYTE *)hSource + names[i]);
 
@@ -326,7 +328,6 @@ static HMODULE WINAPI hkLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWOR
 		if (!g_config.coldloaderhooks) {
 			RenameLdrEntry(hEmulator, dllName, true);
 		}
-		HideLdrEntry(hReal);
 
 		int count = HookAllExports(hEmulator, hReal);
 		if (count > 0) {
@@ -335,6 +336,7 @@ static HMODULE WINAPI hkLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWOR
 		} else {
 			LOG("[DSE-DLL] No exports hooked for %ls!\n", dllName);
 		}
+		HideLdrEntry(hReal);
 	}
 	return hModule;
 }
