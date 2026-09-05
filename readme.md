@@ -30,6 +30,7 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
 2. Configure `dse.ini` if needed.
 
 ## Steam config setup (overlay + input)
+### CAP/2k games wont get support, please only use dse option with these titles.
 
 1. Enable in config (`dse.ini`) file `steamHooks=1/true/yes`.
     ```ini
@@ -63,8 +64,7 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
 5. Put Lua files in `steam/config/lua` and manifests in `steamdepot/cache`.
 6. Click Play.
 
-### In cases where the game only works with coldclient setups (CAP/CD/SCDLC/2K)
-### CAP/2k games wont get support, please only use dse option with these titles.
+### In cases where the game only works with coldclient setups (SCDLC)
 1. Enable in config (`dse.ini`) file `steamHooks=1/true/yes` and `coldloaderhooks=1/true/yes`
 
     1.1 Make sure that `steam_path` is set to your steam path, and you have `coldclient` near dse.dll or exe 
