@@ -53,7 +53,6 @@ if(MSVC)
         /Ob3
         /GL
         /Gw
-        /GS-
         /fp:fast
         /MT
         /W3
@@ -66,7 +65,6 @@ if(MSVC)
         /OPT:ICF=3
         /INCREMENTAL:NO
         /DEBUG:NONE
-        /MERGE:.rdata=.text
     )
 else()
     set(COMPILER_OPTIONS

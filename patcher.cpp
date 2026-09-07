@@ -50,7 +50,8 @@ void EnsurePatcherExtracted() {
 		PathAppendW(patcherPath, kPatcherName);
 	}
 	if (GetFileAttributesW(patcherPath) == INVALID_FILE_ATTRIBUTES) {
-		FILE *file = _wfopen(patcherPath, L"wb");
+		FILE *file = nullptr;
+		_wfopen_s(&file, patcherPath, L"wb");
 		if (file) {
 			size_t written = fwrite(bin_patcher, 1, bin_patcher_len, file);
 			fclose(file);

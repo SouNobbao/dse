@@ -4,6 +4,7 @@
 #include "config.h"
 #include "log.h"
 #include "minhook/include/MinHook.h"
+#include <intrin.h>
 #include <shlwapi.h>
 #include <windows.h>
 
@@ -187,7 +188,7 @@ static void LoadSteamConfigFromDll(HMODULE hSteamApi) {
 
 	if (appId > 0) {
 		char envBuf[32];
-		sprintf(envBuf, "%u", appId);
+		_snprintf_s(envBuf, ARRAYSIZE(envBuf), _TRUNCATE, "%u", appId);
 		SetEnvironmentVariableA("SteamAppId", envBuf);
 		SetEnvironmentVariableA("SteamGameId", envBuf);
 		LOG("[DSE-DLL] Set env SteamAppId/SteamGameId = %u\n", appId);
@@ -230,9 +231,9 @@ static void **g_pISteamUserVTable = nullptr;
 static void **g_pISteamFriendsVTable = nullptr;
 
 // VTable typedefs
-// CSteamID is returned through a hidden return buffer for MSVC x64.
-// VTable calls pass the instance first; return buffer follows.
-typedef void *(*pfn_GetSteamID_vtable)(void *self, uint64_t *pOut);
+// CSteamID is returned through a hidden return buffer for this game's MSVC
+// x64 vtable calls: RCX = instance, RDX = hidden output buffer.
+typedef uint64_t *(*pfn_GetSteamID_vtable)(void *self, uint64_t *pOut);
 static pfn_GetSteamID_vtable Orig_GetSteamID_vtable = nullptr;
 
 typedef bool (*pfn_BLoggedOn_vtable)(void *);
@@ -415,45 +416,257 @@ static void *Hooked_ISteamClient_GetISteamFriends_flat(void *self, int32_t hStea
 	return p;
 }
 
-// VTable hooks
-static void *Hooked_GetSteamID_vtable(void *self, uint64_t *pOut) {
-	uint64_t localBuf = 0;
-	uint64_t orig = 0;
-	bool usedHiddenBuf = false;
+static void FormatCodeAddress(void *address, char *buffer, size_t bufferSize) {
+	if (!buffer || bufferSize == 0)
+		return;
 
-	if (Orig_GetSteamID_vtable) {
-		void *raw = Orig_GetSteamID_vtable(self, &localBuf);
-		if (raw == (void *)&localBuf) {
-			orig = localBuf;
-			usedHiddenBuf = true;
-		} else {
-			orig = (uint64_t)(uintptr_t)raw;
+	buffer[0] = '\0';
+	HMODULE module = nullptr;
+	if (address &&
+		GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+							   GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+						   reinterpret_cast<LPCSTR>(address), &module)) {
+		char modulePath[MAX_PATH]{};
+		if (GetModuleFileNameA(module, modulePath, ARRAYSIZE(modulePath))) {
+			const char *moduleName = PathFindFileNameA(modulePath);
+			_snprintf_s(buffer, bufferSize, _TRUNCATE, "%s+0x%llX", moduleName,
+						(unsigned long long)((uintptr_t)address - (uintptr_t)module));
+			return;
+		}
+	}
+
+	_snprintf_s(buffer, bufferSize, _TRUNCATE, "unknown+0x0");
+}
+
+static void LogCallerCode(void *caller) {
+	if (!caller)
+		return;
+
+	char line[512]{};
+	size_t used = 0;
+	__try {
+		for (int offset = -16; offset < 16 && used < sizeof(line); ++offset) {
+			if (offset == 0) {
+				int written = _snprintf_s(line + used, sizeof(line) - used,
+									  _TRUNCATE, "[RET] ");
+				if (written > 0)
+					used += (size_t)written;
+			}
+
+			unsigned char byte = *(reinterpret_cast<unsigned char *>(caller) + offset);
+			int written = _snprintf_s(line + used, sizeof(line) - used,
+								  _TRUNCATE, "%02X ", byte);
+			if (written > 0)
+				used += (size_t)written;
+		}
+		LOG("[DSE-DLL]   caller code (-16..+16): %s\n", line);
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		LOG("[DSE-DLL]   caller code unavailable at %p\n", caller);
+	}
+}
+
+enum {
+	kMaxGenericVTableSlots = 120,
+	kMaxGenericVTableSwaps = 64
+};
+
+struct GenericVTableSwap {
+	void *object;
+	void **realVTable;
+	void **fakeVTable;
+	size_t numSlots;
+	void *storage[kMaxGenericVTableSlots + 2];
+};
+
+static SRWLOCK g_vtableSwapLock = SRWLOCK_INIT;
+static GenericVTableSwap g_GenericVTableSwaps[kMaxGenericVTableSwaps]{};
+
+static GenericVTableSwap *FindGenericSwapByObjectLocked(void *object) {
+	for (int i = 0; i < kMaxGenericVTableSwaps; i++) {
+		if (g_GenericVTableSwaps[i].object == object)
+			return &g_GenericVTableSwaps[i];
+	}
+	return nullptr;
+}
+
+static GenericVTableSwap *FindGenericSwapByFakeVTableLocked(void **vtable) {
+	for (int i = 0; i < kMaxGenericVTableSwaps; i++) {
+		if (g_GenericVTableSwaps[i].fakeVTable == vtable)
+			return &g_GenericVTableSwaps[i];
+	}
+	return nullptr;
+}
+
+static GenericVTableSwap *BeginGenericVTableSwapLocked(void *pInterface, size_t numSlots,
+													   bool *freshSwap) {
+	if (freshSwap)
+		*freshSwap = false;
+	if (!pInterface)
+		return nullptr;
+
+	AcquireSRWLockExclusive(&g_vtableSwapLock);
+
+	void **vtable = nullptr;
+	__try {
+		vtable = *(void ***)pInterface;
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		ReleaseSRWLockExclusive(&g_vtableSwapLock);
+		return nullptr;
+	}
+
+	GenericVTableSwap *existing = FindGenericSwapByObjectLocked(pInterface);
+	if (!existing)
+		existing = FindGenericSwapByFakeVTableLocked(vtable);
+	if (existing) {
+		ReleaseSRWLockExclusive(&g_vtableSwapLock);
+		return existing;
+	}
+
+	GenericVTableSwap *slot = nullptr;
+	for (int i = 0; i < kMaxGenericVTableSwaps; i++) {
+		if (!g_GenericVTableSwaps[i].object) {
+			slot = &g_GenericVTableSwaps[i];
+			break;
+		}
+	}
+	if (!slot) {
+		ReleaseSRWLockExclusive(&g_vtableSwapLock);
+		LOG("[DSE-DLL] No free vtable swap slots for object %p\n", pInterface);
+		return nullptr;
+	}
+
+	if (numSlots > kMaxGenericVTableSlots)
+		numSlots = kMaxGenericVTableSlots;
+
+	void **fakeVTable = (void **)&slot->storage[2];
+	__try {
+		fakeVTable[-2] = vtable[-2];
+		fakeVTable[-1] = vtable[-1];
+	} __except (EXCEPTION_EXECUTE_HANDLER) {}
+
+	for (size_t i = 0; i < numSlots; i++) {
+		__try {
+			fakeVTable[i] = vtable[i];
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
+			numSlots = i;
+			break;
+		}
+	}
+
+	slot->object = pInterface;
+	slot->realVTable = vtable;
+	slot->fakeVTable = fakeVTable;
+	slot->numSlots = numSlots;
+	if (freshSwap)
+		*freshSwap = true;
+	return slot;
+}
+
+static void AbortGenericVTableSwapLocked(GenericVTableSwap *swap) {
+	if (swap) {
+		swap->object = nullptr;
+		swap->realVTable = nullptr;
+		swap->fakeVTable = nullptr;
+		swap->numSlots = 0;
+	}
+	ReleaseSRWLockExclusive(&g_vtableSwapLock);
+}
+
+static bool PublishGenericVTableSwapLocked(GenericVTableSwap *swap) {
+	if (!swap || !swap->object || !swap->fakeVTable) {
+		ReleaseSRWLockExclusive(&g_vtableSwapLock);
+		return false;
+	}
+
+	DWORD oldProtect = 0;
+	if (!VirtualProtect(swap->object, sizeof(void *), PAGE_READWRITE, &oldProtect)) {
+		LOG("[DSE-DLL] Failed to swap vtable for object %p: %lu\n", swap->object, GetLastError());
+		AbortGenericVTableSwapLocked(swap);
+		return false;
+	}
+	MemoryBarrier();
+	*(void ***)swap->object = swap->fakeVTable;
+	VirtualProtect(swap->object, sizeof(void *), oldProtect, &oldProtect);
+	LOG("[DSE-DLL] VTable swapped object at %p (real=%p fake=%p)\n",
+		swap->object, swap->realVTable, swap->fakeVTable);
+	ReleaseSRWLockExclusive(&g_vtableSwapLock);
+	return true;
+}
+
+static void *GetGenericOriginalSlotForDetour(void *self, void *detour, void *fallback) {
+	if (!self || !detour)
+		return fallback;
+
+	void *result = fallback;
+	AcquireSRWLockShared(&g_vtableSwapLock);
+	GenericVTableSwap *swap = FindGenericSwapByObjectLocked(self);
+	if (!swap) {
+		void **vtable = nullptr;
+		__try {
+			vtable = *(void ***)self;
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
+			vtable = nullptr;
+		}
+		if (vtable)
+			swap = FindGenericSwapByFakeVTableLocked(vtable);
+	}
+
+	if (swap && swap->realVTable && swap->fakeVTable) {
+		for (size_t i = 0; i < swap->numSlots; i++) {
+			if (swap->fakeVTable[i] == detour) {
+				result = swap->realVTable[i];
+				break;
+			}
+		}
+	}
+	ReleaseSRWLockShared(&g_vtableSwapLock);
+	return result;
+}
+
+// VTable hooks
+static uint64_t *Hooked_GetSteamID_vtable(void *self, uint64_t *pOut) {
+	uint64_t localBuf = 0;
+	uint64_t *out = pOut ? pOut : &localBuf;
+	uint64_t orig = 0;
+
+	pfn_GetSteamID_vtable origFn =
+		(pfn_GetSteamID_vtable)GetGenericOriginalSlotForDetour(
+			self, (void *)&Hooked_GetSteamID_vtable, (void *)Orig_GetSteamID_vtable);
+	if (origFn) {
+		origFn(self, out);
+		__try {
+			orig = *out;
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
+			orig = 0;
 		}
 	}
 
 	uint64_t ret = SelectSteamID(orig);
-
-	static bool s_synced = false;
-	if (!s_synced && orig != ret && orig != 0) {
-		s_synced = true;
+	__try {
+		*out = ret;
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		LOG("[DSE-DLL] ISteamUser::GetSteamID() could not write pOut=%p\n", out);
 	}
 
-	if (usedHiddenBuf && pOut)
-		*pOut = ret;
+	void *caller = _ReturnAddress();
+	void *origFunc = nullptr;
+	__try {
+		origFunc = (void *)origFn;
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		origFunc = reinterpret_cast<void *>(Orig_GetSteamID_vtable);
+	}
 
-#if defined(__GNUC__) || defined(__clang__)
-	LOG("[DSE-DLL] ISteamUser::GetSteamID() orig=%llu -> %llu (caller=%p)\n",
-		(unsigned long long)orig, (unsigned long long)ret, __builtin_return_address(0));
-#elif defined(_MSC_VER)
-#include <intrin.h>
-	LOG("[DSE-DLL] ISteamUser::GetSteamID() orig=%llu -> %llu (caller=%p)\n",
-		(unsigned long long)orig, (unsigned long long)ret, _ReturnAddress());
-#else
-	LOG("[DSE-DLL] ISteamUser::GetSteamID() orig=%llu -> %llu (caller=%p)\n",
-		(unsigned long long)orig, (unsigned long long)ret, (void *)0);
-#endif
+	char callerName[MAX_PATH + 32]{};
+	char origName[MAX_PATH + 32]{};
+	FormatCodeAddress(caller, callerName, ARRAYSIZE(callerName));
+	FormatCodeAddress(origFunc, origName, ARRAYSIZE(origName));
+	LOG("[DSE-DLL] ISteamUser::GetSteamID() orig=%llu -> %llu "
+		"(pOut=%p, caller=%s [%p], origFunc=%s, self=%p, abi=sret-self-first)\n",
+		(unsigned long long)orig, (unsigned long long)ret, pOut, callerName,
+		caller, origName, self);
+	LogCallerCode(caller);
 
-	return usedHiddenBuf ? pOut : (void *)(uintptr_t)ret;
+	return out;
 }
 
 typedef void *(*pfn_GetAppOwner_vtable)(void *self, uint64_t *pOut);
@@ -464,8 +677,11 @@ static void *Hooked_GetAppOwner_vtable(void *self, uint64_t *pOut) {
 	uint64_t orig = 0;
 	bool usedHiddenBuf = false;
 
-	if (Orig_GetAppOwner_vtable) {
-		void *raw = Orig_GetAppOwner_vtable(self, &localBuf);
+	pfn_GetAppOwner_vtable origFn =
+		(pfn_GetAppOwner_vtable)GetGenericOriginalSlotForDetour(
+			self, (void *)&Hooked_GetAppOwner_vtable, (void *)Orig_GetAppOwner_vtable);
+	if (origFn) {
+		void *raw = origFn(self, &localBuf);
 		if (raw == (void *)&localBuf) {
 			orig = localBuf;
 			usedHiddenBuf = true;
@@ -494,7 +710,10 @@ static bool Hooked_BLoggedOn_vtable(void *self) {
 }
 
 static int Hooked_GetPersonaState_vtable(void *self) {
-	int orig = Orig_GetPersonaState_vtable ? Orig_GetPersonaState_vtable(self) : 0;
+	pfn_GetPersonaState_vtable origFn =
+		(pfn_GetPersonaState_vtable)GetGenericOriginalSlotForDetour(
+			self, (void *)&Hooked_GetPersonaState_vtable, (void *)Orig_GetPersonaState_vtable);
+	int orig = origFn ? origFn(self) : 0;
 	int ret = g_forceOffline ? 0 : orig;
 	LOG("[DSE-DLL] ISteamFriends::GetPersonaState() orig=%d -> %d\n", orig,
 		ret);
@@ -526,10 +745,186 @@ static void HookSteamInterfaceByVersion(void *pInterface, const char *pszVersion
 	}
 }
 
+static void **g_pISteamClientVTable = nullptr;
+
+enum {
+	kMaxClientVTableSlots = 120,
+	kMaxClientVTableSwaps = 16
+};
+
+struct ClientVTableSwap {
+	void *object;
+	void **realVTable;
+	void **fakeVTable;
+	size_t numSlots;
+	int callbackSlot;
+	void *storage[kMaxClientVTableSlots + 2];
+};
+
+static ClientVTableSwap g_ClientVTableSwaps[kMaxClientVTableSwaps]{};
+
+static ClientVTableSwap *FindClientSwapByObjectLocked(void *object) {
+	for (int i = 0; i < kMaxClientVTableSwaps; i++) {
+		if (g_ClientVTableSwaps[i].object == object)
+			return &g_ClientVTableSwaps[i];
+	}
+	return nullptr;
+}
+
+static ClientVTableSwap *FindClientSwapByFakeVTableLocked(void **vtable) {
+	for (int i = 0; i < kMaxClientVTableSwaps; i++) {
+		if (g_ClientVTableSwaps[i].fakeVTable == vtable)
+			return &g_ClientVTableSwaps[i];
+	}
+	return nullptr;
+}
+
+static void *GetClientOriginalSlot(void *self, int slot, void *fallback) {
+	if (g_config.coldloaderhooks && self && slot >= 0 && slot < kMaxClientVTableSlots) {
+		void *result = fallback;
+		AcquireSRWLockShared(&g_vtableSwapLock);
+		ClientVTableSwap *swap = FindClientSwapByObjectLocked(self);
+		if (!swap) {
+			__try {
+				swap = FindClientSwapByFakeVTableLocked(*(void ***)self);
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				swap = nullptr;
+			}
+		}
+		if (swap && swap->realVTable && (size_t)slot < swap->numSlots)
+			result = swap->realVTable[slot];
+		ReleaseSRWLockShared(&g_vtableSwapLock);
+		return result;
+	}
+	return fallback;
+}
+
+static void *GetClientCallbackOriginal(void *self, void *fallback) {
+	if (!g_config.coldloaderhooks || !self)
+		return fallback;
+
+	void *result = fallback;
+	AcquireSRWLockShared(&g_vtableSwapLock);
+	ClientVTableSwap *swap = FindClientSwapByObjectLocked(self);
+	if (!swap) {
+		__try {
+			swap = FindClientSwapByFakeVTableLocked(*(void ***)self);
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
+			swap = nullptr;
+		}
+	}
+	if (swap && swap->realVTable && swap->callbackSlot >= 0 &&
+		(size_t)swap->callbackSlot < swap->numSlots) {
+		result = swap->realVTable[swap->callbackSlot];
+	}
+	ReleaseSRWLockShared(&g_vtableSwapLock);
+	return result;
+}
+
+static ClientVTableSwap *BeginClientVTableSwapLocked(void *pInterface, size_t numSlots,
+													 bool *freshSwap) {
+	if (freshSwap)
+		*freshSwap = false;
+	if (!pInterface)
+		return nullptr;
+
+	AcquireSRWLockExclusive(&g_vtableSwapLock);
+
+	void **vtable = nullptr;
+	__try {
+		vtable = *(void ***)pInterface;
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		ReleaseSRWLockExclusive(&g_vtableSwapLock);
+		return nullptr;
+	}
+
+	ClientVTableSwap *existing = FindClientSwapByObjectLocked(pInterface);
+	if (!existing)
+		existing = FindClientSwapByFakeVTableLocked(vtable);
+	if (existing) {
+		ReleaseSRWLockExclusive(&g_vtableSwapLock);
+		return existing;
+	}
+
+	ClientVTableSwap *slot = nullptr;
+	for (int i = 0; i < kMaxClientVTableSwaps; i++) {
+		if (!g_ClientVTableSwaps[i].object) {
+			slot = &g_ClientVTableSwaps[i];
+			break;
+		}
+	}
+	if (!slot) {
+		LOG("[DSE-DLL] No free ISteamClient vtable swap slots for object %p\n", pInterface);
+		ReleaseSRWLockExclusive(&g_vtableSwapLock);
+		return nullptr;
+	}
+
+	if (numSlots > kMaxClientVTableSlots)
+		numSlots = kMaxClientVTableSlots;
+
+	void **fakeVTable = (void **)&slot->storage[2];
+	__try {
+		fakeVTable[-2] = vtable[-2];
+		fakeVTable[-1] = vtable[-1];
+	} __except (EXCEPTION_EXECUTE_HANDLER) {}
+
+	for (size_t i = 0; i < numSlots; i++) {
+		__try {
+			fakeVTable[i] = vtable[i];
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
+			break;
+		}
+	}
+
+	slot->object = pInterface;
+	slot->realVTable = vtable;
+	slot->fakeVTable = fakeVTable;
+	slot->numSlots = numSlots;
+	slot->callbackSlot = -1;
+	if (freshSwap)
+		*freshSwap = true;
+	return slot;
+}
+
+static void AbortClientVTableSwapLocked(ClientVTableSwap *swap) {
+	if (swap) {
+		swap->object = nullptr;
+		swap->realVTable = nullptr;
+		swap->fakeVTable = nullptr;
+		swap->numSlots = 0;
+		swap->callbackSlot = -1;
+	}
+	ReleaseSRWLockExclusive(&g_vtableSwapLock);
+}
+
+static bool PublishClientVTableSwapLocked(ClientVTableSwap *swap) {
+	if (!swap || !swap->object || !swap->fakeVTable) {
+		ReleaseSRWLockExclusive(&g_vtableSwapLock);
+		return false;
+	}
+
+	DWORD oldProtect = 0;
+	if (!VirtualProtect(swap->object, sizeof(void *), PAGE_READWRITE, &oldProtect)) {
+		LOG("[DSE-DLL] Failed to swap ISteamClient vtable for object %p: %lu\n",
+			swap->object, GetLastError());
+		AbortClientVTableSwapLocked(swap);
+		return false;
+	}
+	MemoryBarrier();
+	*(void ***)swap->object = swap->fakeVTable;
+	VirtualProtect(swap->object, sizeof(void *), oldProtect, &oldProtect);
+	LOG("[DSE-DLL] ISteamClient vtable swapped object at %p (real=%p fake=%p)\n",
+		swap->object, swap->realVTable, swap->fakeVTable);
+	ReleaseSRWLockExclusive(&g_vtableSwapLock);
+	return true;
+}
+
 #define HOOK_CLIENT_SLOT(slot)                                                                                                   \
-	static void *(*Orig_ClientSlot##slot)(void *self, int32_t hSteamUser, int32_t hSteamPipe, const char *pchVersion) = nullptr; \
+	typedef void *(*pfn_ClientSlot##slot)(void *self, int32_t hSteamUser, int32_t hSteamPipe, const char *pchVersion);           \
+	static pfn_ClientSlot##slot Orig_ClientSlot##slot = nullptr;                                                                 \
 	static void *Hooked_ClientSlot##slot(void *self, int32_t hSteamUser, int32_t hSteamPipe, const char *pchVersion) {           \
-		void *p = Orig_ClientSlot##slot ? Orig_ClientSlot##slot(self, hSteamUser, hSteamPipe, pchVersion) : nullptr;             \
+		pfn_ClientSlot##slot orig = (pfn_ClientSlot##slot)GetClientOriginalSlot(self, slot, (void *)Orig_ClientSlot##slot);      \
+		void *p = orig ? orig(self, hSteamUser, hSteamPipe, pchVersion) : nullptr;                                                \
 		if (p && pchVersion) {                                                                                                   \
 			LOG("[DSE-DLL] ISteamClient::Slot" #slot "(%s) -> %p\n", pchVersion, p);                                             \
 			HookSteamInterfaceByVersion(p, pchVersion);                                                                          \
@@ -538,26 +933,32 @@ static void HookSteamInterfaceByVersion(void *pInterface, const char *pszVersion
 	}
 
 #define HOOK_CLIENT_UTILS_SLOT(slot)                                                                         \
-	static void *(*Orig_ClientSlot##slot)(void *self, int32_t hSteamPipe, const char *pchVersion) = nullptr; \
+	typedef void *(*pfn_ClientSlot##slot)(void *self, int32_t hSteamPipe, const char *pchVersion);           \
+	static pfn_ClientSlot##slot Orig_ClientSlot##slot = nullptr;                                             \
 	static void *Hooked_ClientSlot##slot(void *self, int32_t hSteamPipe, const char *pchVersion) {           \
-		void *p = Orig_ClientSlot##slot ? Orig_ClientSlot##slot(self, hSteamPipe, pchVersion) : nullptr;     \
+		pfn_ClientSlot##slot orig = (pfn_ClientSlot##slot)GetClientOriginalSlot(self, slot, (void *)Orig_ClientSlot##slot); \
+		void *p = orig ? orig(self, hSteamPipe, pchVersion) : nullptr;                                      \
 		LOG("[DSE-DLL] ISteamClient::Slot" #slot " (utils) -> %p\n", p);                                     \
 		return p;                                                                                            \
 	}
 
-static void (*Orig_ClientSlot4)(void *self, int32_t hSteamPipe, int32_t hUser) = nullptr;
+typedef void (*pfn_ClientSlot4)(void *self, int32_t hSteamPipe, int32_t hUser);
+static pfn_ClientSlot4 Orig_ClientSlot4 = nullptr;
 static void Hooked_ClientSlot4(void *self, int32_t hSteamPipe, int32_t hUser) {
 	LOG("[DSE-DLL] ISteamClient::Slot4 (ReleaseUser) %d %d -> forwarded\n", hSteamPipe, hUser);
-	if (Orig_ClientSlot4)
-		Orig_ClientSlot4(self, hSteamPipe, hUser);
+	pfn_ClientSlot4 orig = (pfn_ClientSlot4)GetClientOriginalSlot(self, 4, (void *)Orig_ClientSlot4);
+	if (orig)
+		orig(self, hSteamPipe, hUser);
 	LOG("[DSE-DLL] ISteamClient::Slot4 (ReleaseUser) -> forwarded SUCCESS\n");
 }
 
 static void (*Orig_SetCallbackCheck)(void *self, void *func) = nullptr;
 static void Hooked_SetCallbackCheck(void *self, void *func) {
 	LOG("[DSE-DLL] ISteamClient::Set_SteamAPI_CCheckCallbackRegisteredInProcess -> forwarded\n");
-	if (Orig_SetCallbackCheck)
-		Orig_SetCallbackCheck(self, func);
+	auto orig = (decltype(Orig_SetCallbackCheck))GetClientCallbackOriginal(
+		self, (void *)Orig_SetCallbackCheck);
+	if (orig)
+		orig(self, func);
 }
 
 HOOK_CLIENT_SLOT(5);
@@ -580,7 +981,8 @@ static void *Hooked_ClientSlot12(void *self, int32_t hSteamUser, int32_t hSteamP
 		LOG("[DSE-DLL] ISteamClient::Slot12 (GetISteamGenericInterface) %s -> returning fake AppTicket\n", pchVersion);
 		return &g_pFakeAppTicket;
 	}
-	void *p = Orig_ClientSlot12 ? Orig_ClientSlot12(self, hSteamUser, hSteamPipe, pchVersion) : nullptr;
+	auto orig = (decltype(Orig_ClientSlot12))GetClientOriginalSlot(self, 12, (void *)Orig_ClientSlot12);
+	void *p = orig ? orig(self, hSteamUser, hSteamPipe, pchVersion) : nullptr;
 	LOG("[DSE-DLL] ISteamClient::Slot12 (GetISteamGenericInterface) %s -> %p\n", pchVersion, p);
 	if (p && pchVersion)
 		HookSteamInterfaceByVersion(p, pchVersion);
@@ -600,7 +1002,11 @@ static uint32_t Hooked_GetEarliestPurchaseUnixTime_vtable(void *self, uint32_t a
 		LOG("[DSE-DLL] ISteamApps::GetEarliestPurchaseUnixTime(%u) -> spoofed\n", appID);
 		return 1700000000;
 	}
-	uint32_t orig = Orig_GetEarliestPurchaseUnixTime_vtable ? Orig_GetEarliestPurchaseUnixTime_vtable(self, appID) : 0;
+	pfn_GetEarliestPurchaseUnixTime_vtable origFn =
+		(pfn_GetEarliestPurchaseUnixTime_vtable)GetGenericOriginalSlotForDetour(
+			self, (void *)&Hooked_GetEarliestPurchaseUnixTime_vtable,
+			(void *)Orig_GetEarliestPurchaseUnixTime_vtable);
+	uint32_t orig = origFn ? origFn(self, appID) : 0;
 	LOG("[DSE-DLL] ISteamApps::GetEarliestPurchaseUnixTime(%u) -> %u (original)\n", appID, orig);
 	return orig;
 }
@@ -777,7 +1183,7 @@ static int ResolveSteamUserLicenseSlot(const char *pszVersion) {
 	return -1;
 }
 
-static void SwapVTable(void *pInterface, void ***pFakeVTableOut, void ***pRealVTableOut, void **staticBuffer) {
+static void SwapVTable(void *pInterface, void ***pFakeVTableOut, void ***pRealVTableOut, void **staticBuffer, size_t numSlots = 100) {
 	void **vtable = *(void ***)pInterface;
 	if (*pFakeVTableOut && vtable == *pFakeVTableOut)
 		return;
@@ -787,12 +1193,21 @@ static void SwapVTable(void *pInterface, void ***pFakeVTableOut, void ***pRealVT
 	void **fakeVTable = &staticBuffer[2];
 
 	// Copy RTTI metadata and the VTable itself
-	fakeVTable[-2] = vtable[-2]; // Sometimes useful
-	fakeVTable[-1] = vtable[-1]; // RTTI CompleteObjectLocator
-	memcpy(fakeVTable, vtable, sizeof(void *) * 100);
+	__try {
+		fakeVTable[-2] = vtable[-2]; // Sometimes useful
+		fakeVTable[-1] = vtable[-1]; // RTTI CompleteObjectLocator
+	} __except (EXCEPTION_EXECUTE_HANDLER) {}
+
+	for (size_t i = 0; i < numSlots; i++) {
+		__try {
+			fakeVTable[i] = vtable[i];
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
+			break;
+		}
+	}
 
 	DWORD oldProtect;
-	VirtualProtect(pInterface, sizeof(void *), PAGE_EXECUTE_READWRITE, &oldProtect);
+	VirtualProtect(pInterface, sizeof(void *), PAGE_READWRITE, &oldProtect);
 	*(void ***)pInterface = fakeVTable;
 	VirtualProtect(pInterface, sizeof(void *), oldProtect, &oldProtect);
 
@@ -801,7 +1216,7 @@ static void SwapVTable(void *pInterface, void ***pFakeVTableOut, void ***pRealVT
 }
 
 static void TryHookVTableSlot_Swap(void **fakeVTable, void **realVTable, int slot, LPVOID detour, LPVOID *orig, const char *name) {
-	if (!realVTable || slot < 0 || !realVTable[slot])
+	if (!fakeVTable || !realVTable || slot < 0 || !realVTable[slot])
 		return;
 
 	if (orig)
@@ -848,14 +1263,18 @@ static void HookInterface_ISteamUser(void *pInterface, const char *pszVersion) {
 	if (!pInterface)
 		return;
 
-	void **realVTable = nullptr;
-	SwapVTable(pInterface, &g_pFakeSteamUserVTable, &realVTable, g_FakeSteamUserVTableBuffer);
-	if (!realVTable)
+	bool freshSwap = false;
+	GenericVTableSwap *swap = BeginGenericVTableSwapLocked(pInterface, 100, &freshSwap);
+	if (!swap)
+		return;
+	if (!freshSwap)
 		return;
 
-	if (g_pISteamUserVTable == realVTable)
-		return;
-	g_pISteamUserVTable = realVTable;
+	void **realVTable = swap->realVTable;
+	void **fakeVTable = swap->fakeVTable;
+	g_pFakeSteamUserVTable = fakeVTable;
+	if (!g_pISteamUserVTable)
+		g_pISteamUserVTable = realVTable;
 
 	int loggedOnSlot = 1;
 	int getIDSlot = 2;
@@ -880,16 +1299,27 @@ static void HookInterface_ISteamUser(void *pInterface, const char *pszVersion) {
 		LOG("[DSE-DLL]   UserHasLicenseForApp -> not present in %s\n",
 			pszVersion ? pszVersion : "this interface");
 
-	// Global function-body hooks: catch GetSteamID/BLoggedOn calls made through
-	// ANY ISteamUser instance, even ones created before our hooks were live or
-	// obtained through unintercepted paths. Swap entries remain as fallback.
-	TryHookSlot_GlobalThenSwap(g_pFakeSteamUserVTable, realVTable, loggedOnSlot, (LPVOID)&Hooked_BLoggedOn_vtable,
+	if (g_config.coldloaderhooks) {
+		TryHookVTableSlot_Swap(fakeVTable, realVTable, loggedOnSlot, (LPVOID)&Hooked_BLoggedOn_vtable,
 							   (LPVOID *)&Orig_BLoggedOn_vtable, "ISteamUser::BLoggedOn");
-	TryHookSlot_GlobalThenSwap(g_pFakeSteamUserVTable, realVTable, getIDSlot, (LPVOID)&Hooked_GetSteamID_vtable,
+		TryHookVTableSlot_Swap(fakeVTable, realVTable, getIDSlot, (LPVOID)&Hooked_GetSteamID_vtable,
 							   (LPVOID *)&Orig_GetSteamID_vtable, "ISteamUser::GetSteamID");
-	if (userHasLicenseSlot >= 0)
-		TryHookSlot_GlobalThenSwap(g_pFakeSteamUserVTable, realVTable, userHasLicenseSlot, (LPVOID)&Hooked_UserHasLicenseForApp_flat,
+		if (userHasLicenseSlot >= 0)
+			TryHookVTableSlot_Swap(fakeVTable, realVTable, userHasLicenseSlot, (LPVOID)&Hooked_UserHasLicenseForApp_flat,
 								   nullptr, "ISteamUser::UserHasLicenseForApp");
+	} else {
+		// Global function-body hooks: catch GetSteamID/BLoggedOn calls made through
+		// ANY ISteamUser instance, even ones created before our hooks were live or
+		// obtained through unintercepted paths. Swap entries remain as fallback.
+		TryHookSlot_GlobalThenSwap(fakeVTable, realVTable, loggedOnSlot, (LPVOID)&Hooked_BLoggedOn_vtable,
+								   (LPVOID *)&Orig_BLoggedOn_vtable, "ISteamUser::BLoggedOn");
+		TryHookSlot_GlobalThenSwap(fakeVTable, realVTable, getIDSlot, (LPVOID)&Hooked_GetSteamID_vtable,
+								   (LPVOID *)&Orig_GetSteamID_vtable, "ISteamUser::GetSteamID");
+		if (userHasLicenseSlot >= 0)
+			TryHookSlot_GlobalThenSwap(fakeVTable, realVTable, userHasLicenseSlot, (LPVOID)&Hooked_UserHasLicenseForApp_flat,
+									   nullptr, "ISteamUser::UserHasLicenseForApp");
+	}
+	PublishGenericVTableSwapLocked(swap);
 }
 
 static void **g_pFakeSteamFriendsVTable = nullptr;
@@ -899,20 +1329,30 @@ static void HookInterface_ISteamFriends(void *pInterface) {
 	if (!pInterface)
 		return;
 
-	void **realVTable = nullptr;
-	SwapVTable(pInterface, &g_pFakeSteamFriendsVTable, &realVTable, g_FakeSteamFriendsVTableBuffer);
-	if (!realVTable)
+	bool freshSwap = false;
+	GenericVTableSwap *swap = BeginGenericVTableSwapLocked(pInterface, 100, &freshSwap);
+	if (!swap)
+		return;
+	if (!freshSwap)
 		return;
 
-	if (g_pISteamFriendsVTable == realVTable)
-		return;
-	g_pISteamFriendsVTable = realVTable;
+	void **realVTable = swap->realVTable;
+	void **fakeVTable = swap->fakeVTable;
+	g_pFakeSteamFriendsVTable = fakeVTable;
+	if (!g_pISteamFriendsVTable)
+		g_pISteamFriendsVTable = realVTable;
 	LOG("[DSE-DLL] Intercepted ISteamFriends vtable at %p\n", realVTable);
 
 	// GetPersonaName is slot 0, GetPersonaState is slot 1 (all SteamFriends
 	// versions 010-021). Slot 2 is GetFriendCount.
-	TryHookSlot_GlobalThenSwap(g_pFakeSteamFriendsVTable, realVTable, 1, (LPVOID)&Hooked_GetPersonaState_vtable,
+	if (g_config.coldloaderhooks) {
+		TryHookVTableSlot_Swap(fakeVTable, realVTable, 1, (LPVOID)&Hooked_GetPersonaState_vtable,
 							   (LPVOID *)&Orig_GetPersonaState_vtable, "ISteamFriends::GetPersonaState");
+	} else {
+		TryHookSlot_GlobalThenSwap(fakeVTable, realVTable, 1, (LPVOID)&Hooked_GetPersonaState_vtable,
+								   (LPVOID *)&Orig_GetPersonaState_vtable, "ISteamFriends::GetPersonaState");
+	}
+	PublishGenericVTableSwapLocked(swap);
 }
 
 static void **g_pISteamAppTicketVTable = nullptr;
@@ -923,21 +1363,22 @@ static void HookInterface_ISteamAppTicket(void *pInterface) {
 	if (!pInterface)
 		return;
 
-	void **realVTable = nullptr;
-	SwapVTable(pInterface, &g_pFakeSteamAppTicketVTable, &realVTable, g_FakeSteamAppTicketVTableBuffer);
-	if (!realVTable)
+	bool freshSwap = false;
+	GenericVTableSwap *swap = BeginGenericVTableSwapLocked(pInterface, 100, &freshSwap);
+	if (!swap)
+		return;
+	if (!freshSwap)
 		return;
 
-	static bool g_steamAppTicketHooked = false;
-	if (g_pISteamAppTicketVTable != realVTable) {
+	void **realVTable = swap->realVTable;
+	void **fakeVTable = swap->fakeVTable;
+	g_pFakeSteamAppTicketVTable = fakeVTable;
+	if (!g_pISteamAppTicketVTable)
 		g_pISteamAppTicketVTable = realVTable;
-		LOG("[DSE-DLL] Intercepted ISteamAppTicket vtable at %p\n", realVTable);
-	}
-	if (!g_steamAppTicketHooked && g_pFakeSteamAppTicketVTable && realVTable[0]) {
-		TryHookVTableSlot_Swap(g_pFakeSteamAppTicketVTable, realVTable, 0, (LPVOID)&Hooked_GetAppOwnershipTicketData_vtable,
-							   (LPVOID *)&Orig_GetAppOwnershipTicketData_vtable, "ISteamAppTicket::GetAppOwnershipTicketData");
-		g_steamAppTicketHooked = true;
-	}
+	LOG("[DSE-DLL] Intercepted ISteamAppTicket vtable at %p\n", realVTable);
+	TryHookVTableSlot_Swap(fakeVTable, realVTable, 0, (LPVOID)&Hooked_GetAppOwnershipTicketData_vtable,
+						   (LPVOID *)&Orig_GetAppOwnershipTicketData_vtable, "ISteamAppTicket::GetAppOwnershipTicketData");
+	PublishGenericVTableSwapLocked(swap);
 }
 
 static void **g_pISteamAppsVTable = nullptr;
@@ -979,93 +1420,93 @@ static void HookInterface_ISteamApps(void *pInterface, const char *pszVersion) {
 	if (!pInterface)
 		return;
 
-	void **realVTable = g_pISteamAppsVTable; // Important to preserve existing realVTable
-	SwapVTable(pInterface, &g_pFakeSteamAppsVTable, &realVTable, g_FakeSteamAppsVTableBuffer);
-	if (!realVTable)
+	bool freshSwap = false;
+	GenericVTableSwap *swap = BeginGenericVTableSwapLocked(pInterface, 100, &freshSwap);
+	if (!swap)
+		return;
+	if (!freshSwap)
 		return;
 
+	void **realVTable = swap->realVTable;
+	void **fakeVTable = swap->fakeVTable;
+	g_pFakeSteamAppsVTable = fakeVTable;
 	int ver = ParseSteamAppsVersion(pszVersion);
-	if (g_pISteamAppsVTable != realVTable) {
+	if (!g_pISteamAppsVTable) {
 		g_pISteamAppsVTable = realVTable;
 		LOG("[DSE-DLL] Intercepted ISteamApps vtable at %p (ver=%d)\n", realVTable, ver);
-	} else if (ver > g_steamAppsVersion) {
-		g_steamAppsVersion = ver;
 	}
+	if (ver > g_steamAppsVersion)
+		g_steamAppsVersion = ver;
+
+	auto HookAppSlot = [&](int slot, LPVOID detour, LPVOID *orig, const char *name) {
+		if (g_config.coldloaderhooks) {
+			TryHookVTableSlot_Swap(fakeVTable, realVTable, slot, detour, orig, name);
+		} else {
+			TryHookVTableSlot(realVTable, slot, detour, orig, name);
+		}
+	};
 
 	if (ver >= 2)
-		TryHookVTableSlot(realVTable, 0, (LPVOID)&Hooked_BIsSubscribed_vtable,
-						  (LPVOID *)&Orig_BIsSubscribed_vtable,
-						  "ISteamApps::BIsSubscribed");
+		HookAppSlot(0, (LPVOID)&Hooked_BIsSubscribed_vtable,
+					(LPVOID *)&Orig_BIsSubscribed_vtable,
+					"ISteamApps::BIsSubscribed");
 
 	if (ver >= 2)
-		TryHookVTableSlot(realVTable, 6, (LPVOID)&Hooked_BIsSubscribedApp_vtable,
-						  (LPVOID *)&Orig_BIsSubscribedApp_vtable,
-						  "ISteamApps::BIsSubscribedApp");
+		HookAppSlot(6, (LPVOID)&Hooked_BIsSubscribedApp_vtable,
+					(LPVOID *)&Orig_BIsSubscribedApp_vtable,
+					"ISteamApps::BIsSubscribedApp");
 
 	if (ver >= 2)
-		TryHookVTableSlot(realVTable, 7, (LPVOID)&Hooked_BIsDlcInstalled_vtable,
-						  (LPVOID *)&Orig_BIsDlcInstalled_vtable,
-						  "ISteamApps::BIsDlcInstalled");
+		HookAppSlot(7, (LPVOID)&Hooked_BIsDlcInstalled_vtable,
+					(LPVOID *)&Orig_BIsDlcInstalled_vtable,
+					"ISteamApps::BIsDlcInstalled");
 
 	if (ver >= 3) {
-		TryHookVTableSlot(realVTable, 8, (LPVOID)&Hooked_GetEarliestPurchaseUnixTime_vtable,
-						  (LPVOID *)&Orig_GetEarliestPurchaseUnixTime_vtable,
-						  "ISteamApps::GetEarliestPurchaseUnixTime");
+		HookAppSlot(8, (LPVOID)&Hooked_GetEarliestPurchaseUnixTime_vtable,
+					(LPVOID *)&Orig_GetEarliestPurchaseUnixTime_vtable,
+					"ISteamApps::GetEarliestPurchaseUnixTime");
 	}
 
 	if (ver >= 4) {
-		TryHookVTableSlot(realVTable, 10, (LPVOID)&Hooked_GetDLCCount_vtable,
-						  (LPVOID *)&Orig_GetDLCCount_vtable,
-						  "ISteamApps::GetDLCCount");
+		HookAppSlot(10, (LPVOID)&Hooked_GetDLCCount_vtable,
+					(LPVOID *)&Orig_GetDLCCount_vtable,
+					"ISteamApps::GetDLCCount");
 
-		TryHookVTableSlot(realVTable, 11, (LPVOID)&Hooked_BGetDLCDataByIndex_vtable,
-						  (LPVOID *)&Orig_BGetDLCDataByIndex_vtable,
-						  "ISteamApps::BGetDLCDataByIndex");
+		HookAppSlot(11, (LPVOID)&Hooked_BGetDLCDataByIndex_vtable,
+					(LPVOID *)&Orig_BGetDLCDataByIndex_vtable,
+					"ISteamApps::BGetDLCDataByIndex");
 	}
 
 	if (ver >= 6) {
-		TryHookVTableSlot(realVTable, 19, (LPVOID)&Hooked_BIsAppInstalled_vtable,
-						  (LPVOID *)&Orig_BIsAppInstalled_vtable,
-						  "ISteamApps::BIsAppInstalled");
+		HookAppSlot(19, (LPVOID)&Hooked_BIsAppInstalled_vtable,
+					(LPVOID *)&Orig_BIsAppInstalled_vtable,
+					"ISteamApps::BIsAppInstalled");
 	}
 
 	if (ver >= 8) {
-		TryHookVTableSlot(realVTable, 20, (LPVOID)&Hooked_GetAppOwner_vtable,
-						  (LPVOID *)&Orig_GetAppOwner_vtable,
-						  "ISteamApps::GetAppOwner");
+		HookAppSlot(20, (LPVOID)&Hooked_GetAppOwner_vtable,
+					(LPVOID *)&Orig_GetAppOwner_vtable,
+					"ISteamApps::GetAppOwner");
 	}
+	PublishGenericVTableSwapLocked(swap);
 }
 
-static void **g_pISteamClientVTable = nullptr;
 static void HookInterface_ISteamClient(void *pInterface, const char *pszVersion) {
 	if (!pInterface)
 		return;
-	void **vtable = *(void ***)pInterface;
-	if (g_pISteamClientVTable == vtable)
+	void **vtable = nullptr;
+	__try {
+		vtable = *(void ***)pInterface;
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
 		return;
-	g_pISteamClientVTable = vtable;
-	LOG("[DSE-DLL] Intercepted ISteamClient vtable at %p (%s)\n", vtable, pszVersion ? pszVersion : "unknown");
+	}
+	LOG("[DSE-DLL] Intercepted ISteamClient vtable at %p (%s)\n",
+		vtable, pszVersion ? pszVersion : "unknown");
 
 	int ver = 0;
 	if (pszVersion && strncmp(pszVersion, "SteamClient0", 12) == 0) {
 		ver = atoi(pszVersion + 12);
 	}
-
-#define APPLY_CLIENT_HOOK(slot)                                                                        \
-	MH_CreateHook(vtable[slot], (LPVOID) & Hooked_ClientSlot##slot, (LPVOID *)&Orig_ClientSlot##slot); \
-	MH_EnableHook(vtable[slot])
-
-	APPLY_CLIENT_HOOK(4); // ReleaseUser
-	APPLY_CLIENT_HOOK(5); // GetISteamUser
-	APPLY_CLIENT_HOOK(8);
-	APPLY_CLIENT_HOOK(9);
-	APPLY_CLIENT_HOOK(10);
-	APPLY_CLIENT_HOOK(11);
-	APPLY_CLIENT_HOOK(12);
-	APPLY_CLIENT_HOOK(13);
-	APPLY_CLIENT_HOOK(14);
-	APPLY_CLIENT_HOOK(15);
-	APPLY_CLIENT_HOOK(16);
 
 	int callbackSlot = -1;
 	if (ver == 16)
@@ -1083,11 +1524,65 @@ static void HookInterface_ISteamClient(void *pInterface, const char *pszVersion)
 	else if (ver == 22)
 		callbackSlot = 31;
 
-	if (callbackSlot != -1) {
-		TryHookVTableSlot(vtable, callbackSlot, (LPVOID)&Hooked_SetCallbackCheck, (LPVOID *)&Orig_SetCallbackCheck, "ISteamClient::Set_SteamAPI_CCheckCallbackRegisteredInProcess");
-	}
+	if (g_config.coldloaderhooks) {
+		bool freshSwap = false;
+		ClientVTableSwap *swap = BeginClientVTableSwapLocked(pInterface, kMaxClientVTableSlots, &freshSwap);
+		if (swap && !freshSwap)
+			return;
+		if (!swap || !swap->realVTable || !swap->fakeVTable)
+			return;
+		void **realVTable = swap->realVTable;
+		void **fakeVTable = swap->fakeVTable;
+		swap->callbackSlot = callbackSlot;
+		if (!g_pISteamClientVTable)
+			g_pISteamClientVTable = realVTable;
+
+#define APPLY_CLIENT_SWAP(slot) \
+		TryHookVTableSlot_Swap(fakeVTable, realVTable, slot, (LPVOID)&Hooked_ClientSlot##slot, (LPVOID *)&Orig_ClientSlot##slot, "ISteamClient::Slot" #slot)
+
+		APPLY_CLIENT_SWAP(4); // ReleaseUser
+		APPLY_CLIENT_SWAP(5); // GetISteamUser
+		APPLY_CLIENT_SWAP(8);
+		APPLY_CLIENT_SWAP(9);
+		APPLY_CLIENT_SWAP(10);
+		APPLY_CLIENT_SWAP(11);
+		APPLY_CLIENT_SWAP(12);
+		APPLY_CLIENT_SWAP(13);
+		APPLY_CLIENT_SWAP(14);
+		APPLY_CLIENT_SWAP(15);
+		APPLY_CLIENT_SWAP(16);
+
+#undef APPLY_CLIENT_SWAP
+
+		if (callbackSlot != -1) {
+			TryHookVTableSlot_Swap(fakeVTable, realVTable, callbackSlot, (LPVOID)&Hooked_SetCallbackCheck, (LPVOID *)&Orig_SetCallbackCheck, "ISteamClient::Set_SteamAPI_CCheckCallbackRegisteredInProcess");
+		}
+		PublishClientVTableSwapLocked(swap);
+	} else {
+		g_pISteamClientVTable = vtable;
+
+#define APPLY_CLIENT_HOOK(slot)                                                                        \
+		MH_CreateHook(vtable[slot], (LPVOID) & Hooked_ClientSlot##slot, (LPVOID *)&Orig_ClientSlot##slot); \
+		MH_EnableHook(vtable[slot])
+
+		APPLY_CLIENT_HOOK(4); // ReleaseUser
+		APPLY_CLIENT_HOOK(5); // GetISteamUser
+		APPLY_CLIENT_HOOK(8);
+		APPLY_CLIENT_HOOK(9);
+		APPLY_CLIENT_HOOK(10);
+		APPLY_CLIENT_HOOK(11);
+		APPLY_CLIENT_HOOK(12);
+		APPLY_CLIENT_HOOK(13);
+		APPLY_CLIENT_HOOK(14);
+		APPLY_CLIENT_HOOK(15);
+		APPLY_CLIENT_HOOK(16);
+
+		if (callbackSlot != -1) {
+			TryHookVTableSlot(vtable, callbackSlot, (LPVOID)&Hooked_SetCallbackCheck, (LPVOID *)&Orig_SetCallbackCheck, "ISteamClient::Set_SteamAPI_CCheckCallbackRegisteredInProcess");
+		}
 
 #undef APPLY_CLIENT_HOOK
+	}
 }
 
 static void *
@@ -1382,16 +1877,24 @@ static void SetSteamEnvVars() {
 	WCHAR wPath[MAX_PATH]{};
 	MultiByteToWideChar(CP_UTF8, 0, g_steamPath, -1, wPath, MAX_PATH);
 	SetEnvironmentVariableW(L"SteamPath", wPath);
-	WCHAR clientPath[MAX_PATH]{};
-	lstrcpynW(clientPath, wPath, MAX_PATH);
-	PathAppendW(clientPath, L"steamclient64.dll");
-	SetEnvironmentVariableW(L"SteamClientDll64", clientPath);
-	SetDllDirectoryW(wPath);
-	LOG("[DSE-DLL] Set SteamPath env = %s\n", g_steamPath);
+	if (!g_config.coldloaderhooks) {
+		WCHAR clientPath[MAX_PATH]{};
+		lstrcpynW(clientPath, wPath, MAX_PATH);
+		PathAppendW(clientPath, L"steamclient64.dll");
+		SetEnvironmentVariableW(L"SteamClientDll64", clientPath);
+		SetDllDirectoryW(wPath);
+	} else {
+		SetEnvironmentVariableW(L"SteamClientDll64", NULL);
+	}
+	LOG("[DSE-DLL] Set SteamPath env = %s (coldloaderhooks=%d)\n", g_steamPath, g_config.coldloaderhooks);
 }
 
 // Hook all steam_api exports.
 static void HookSteamAPI(HMODULE hSteamApi) {
+	if (g_config.coldloaderhooks) {
+		LOG("[DSE-DLL] HookSteamAPI called but coldloaderhooks is enabled - skipping steam_api64 patching\n");
+		return;
+	}
 	static bool hooked = false;
 	if (hooked)
 		return;
@@ -1664,6 +2167,14 @@ HMODULE WINAPI Hooked_LoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile,
 
 // Entry point
 static void InitSteamHooks() {
+	if (g_config.coldloaderhooks) {
+		LOG("[DSE-DLL] Coldloader mode enabled: skipping steam_api64.dll MinHook hooks to protect integrity.\n");
+		LoadSteamConfigFromDll(nullptr);
+		ResolveSteamPath();
+		SetSteamEnvVars();
+		return;
+	}
+
 	HMODULE hExisting = GetModuleHandleW(L"steam_api64.dll");
 	if (!hExisting)
 		hExisting = GetModuleHandleW(L"steam_api.dll");

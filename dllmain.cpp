@@ -27,8 +27,8 @@ extern "C" __declspec(dllexport) void DseDll(void) {}
 
 HMODULE g_hModule = nullptr;
 
-#include "steam_coldclient_hooks.cpp"
 #include "steam_hooks.cpp"
+#include "steam_coldclient_hooks.cpp"
 
 #include "checks.h"
 

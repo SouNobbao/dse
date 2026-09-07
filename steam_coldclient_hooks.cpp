@@ -4,7 +4,12 @@
 #include "minhook/include/MinHook.h"
 #include "peb_struct.h"
 #include <shlwapi.h>
+#include <strsafe.h>
 #include <windows.h>
+
+static void HookInterface_ISteamClient(void *pInterface, const char *pszVersion);
+static void HookSteamInterfaceByVersion(void *pInterface, const char *pszVersion);
+static void LoadSteamConfigFromDll(HMODULE hSteamApi);
 
 static UNICODE_STRING g_origBaseDllName{};
 static UNICODE_STRING g_origFullDllName{};
@@ -96,31 +101,103 @@ static bool GetSteamInstallPath(WCHAR *out, DWORD maxChars) {
 	return false;
 }
 
-static void *AllocateTrampolines(HMODULE hModule, size_t size) {
+static void *AllocateEatTrampolines(HMODULE hModule, size_t size, DWORD imageSize) {
 	uintptr_t baseAddr = (uintptr_t)hModule;
-	uintptr_t minAddr = baseAddr > 0x7FFFFFFF ? baseAddr - 0x7FFFFFFF : 0;
-	uintptr_t maxAddr = baseAddr + 0x7FFFFFFF;
+	uintptr_t maxAddr = baseAddr + 0xFFFFFFFFull;
 
 	SYSTEM_INFO si;
 	GetSystemInfo(&si);
-	uintptr_t currentAddr = baseAddr + 0x10000;
+	uintptr_t granularity = si.dwAllocationGranularity;
+	uintptr_t currentAddr = baseAddr + imageSize;
+	currentAddr = (currentAddr + granularity - 1) & ~(granularity - 1);
 
-	while (currentAddr < maxAddr) {
-		void *p = VirtualAlloc((void *)currentAddr, size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-		if (p)
-			return p;
-		currentAddr += si.dwAllocationGranularity;
-	}
-
-	currentAddr = baseAddr - 0x10000;
-	while (currentAddr > minAddr) {
-		void *p = VirtualAlloc((void *)currentAddr, size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-		if (p)
-			return p;
-		currentAddr -= si.dwAllocationGranularity;
+	while (currentAddr >= baseAddr && currentAddr <= maxAddr) {
+		if (size > (size_t)(maxAddr - currentAddr + 1))
+			break;
+		void *p = VirtualAlloc((void *)currentAddr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+		if (p) {
+			uintptr_t pAddr = (uintptr_t)p;
+			uint64_t rva = (uint64_t)(pAddr - baseAddr);
+			if (pAddr >= baseAddr && rva <= 0xFFFFFFFFull &&
+				size <= (size_t)(0x100000000ull - rva)) {
+				return p;
+			}
+			VirtualFree(p, 0, MEM_RELEASE);
+		}
+		if (currentAddr > maxAddr - granularity)
+			break;
+		currentAddr += granularity;
 	}
 
 	return nullptr;
+}
+
+static bool CopyWidePath(WCHAR *dst, size_t dstChars, LPCWSTR src, const char *label) {
+	if (!dst || dstChars == 0 || !src)
+		return false;
+	HRESULT hr = StringCchCopyW(dst, dstChars, src);
+	if (FAILED(hr)) {
+		LOG("[DSE-DLL] Path too long while copying %s\n", label ? label : "path");
+		dst[0] = L'\0';
+		return false;
+	}
+	return true;
+}
+
+static bool GetConfiguredSteamDir(WCHAR *steamDir, size_t steamDirChars) {
+	if (!steamDir || steamDirChars == 0)
+		return false;
+
+	steamDir[0] = L'\0';
+	if (g_config.coldloaderhooks && g_config.steam_path && string_length(g_config.steam_path) > 0) {
+		wchar_t *tmp = string_to_unicode(string_c_str(g_config.steam_path));
+		if (!tmp)
+			return false;
+		bool copied = CopyWidePath(steamDir, steamDirChars, tmp, "configured steam_path");
+		free(tmp);
+		if (!copied)
+			return false;
+	} else if (!GetSteamInstallPath(steamDir, (DWORD)steamDirChars)) {
+		LOG("[DSE-DLL] Cannot find Steam install path in registry\n");
+		return false;
+	}
+
+	for (WCHAR *p = steamDir; *p; p++)
+		if (*p == L'/')
+			*p = L'\\';
+	return true;
+}
+
+typedef void *(*tCreateInterface)(const char *pName, int *pReturnCode);
+static tCreateInterface g_pRealCreateInterface = nullptr;
+
+typedef void *(*tSteamInternal_CreateInterface)(const char *pName);
+static tSteamInternal_CreateInterface g_pRealSteamInternal_CreateInterface = nullptr;
+
+static void *hkCreateInterface(const char *pName, int *pReturnCode) {
+	void *p = g_pRealCreateInterface ? g_pRealCreateInterface(pName, pReturnCode) : nullptr;
+	LOG("[DSE-DLL] CreateInterface(%s) -> %p\n", pName ? pName : "(null)", p);
+	if (p && pName) {
+		if (strncmp(pName, "SteamClient", 11) == 0) {
+			HookInterface_ISteamClient(p, pName);
+		} else {
+			HookSteamInterfaceByVersion(p, pName);
+		}
+	}
+	return p;
+}
+
+static void *hkSteamInternal_CreateInterface(const char *pName) {
+	void *p = g_pRealSteamInternal_CreateInterface ? g_pRealSteamInternal_CreateInterface(pName) : nullptr;
+	LOG("[DSE-DLL] SteamInternal_CreateInterface(%s) -> %p\n", pName ? pName : "(null)", p);
+	if (p && pName) {
+		if (strncmp(pName, "SteamClient", 11) == 0) {
+			HookInterface_ISteamClient(p, pName);
+		} else {
+			HookSteamInterfaceByVersion(p, pName);
+		}
+	}
+	return p;
 }
 
 static int HookAllExports(HMODULE hSource, HMODULE hTarget) {
@@ -143,15 +220,21 @@ static int HookAllExports(HMODULE hSource, HMODULE hTarget) {
 
 	int hooked = 0, skipped = 0, failed = 0;
 
-	BYTE *trampolines = (BYTE *)AllocateTrampolines(hSource, expDir->NumberOfNames * 14);
+	size_t trampolineBytes = expDir->NumberOfNames * 14;
+	BYTE *trampolineBase = (BYTE *)AllocateEatTrampolines(hSource, trampolineBytes,
+														 nt->OptionalHeader.SizeOfImage);
+	BYTE *trampolines = trampolineBase;
 	if (!trampolines) {
-		LOG("[DSE-DLL] Failed to allocate EAT trampolines!\n");
+		LOG("[DSE-DLL] Failed to allocate EAT trampolines above source module base!\n");
 		return 0;
 	}
+	LOG("[DSE-DLL] EAT trampolines allocated at %p (source=%p, rva=0x%llX)\n",
+		trampolines, hSource, (unsigned long long)((uintptr_t)trampolines - (uintptr_t)hSource));
 
 	DWORD oldProt;
 	if (!VirtualProtect(funcs, expDir->NumberOfFunctions * sizeof(DWORD), PAGE_READWRITE, &oldProt)) {
 		LOG("[DSE-DLL] VirtualProtect on EAT failed: %lu\n", GetLastError());
+		VirtualFree(trampolineBase, 0, MEM_RELEASE);
 		return 0;
 	}
 	for (DWORD i = 0; i < expDir->NumberOfNames; i++) {
@@ -176,6 +259,16 @@ static int HookAllExports(HMODULE hSource, HMODULE hTarget) {
 			continue;
 		}
 
+		if (strcmp(name, "CreateInterface") == 0) {
+			g_pRealCreateInterface = (tCreateInterface)dst;
+			dst = (void *)&hkCreateInterface;
+			LOG("[DSE-DLL] Intercepted CreateInterface export for coldloader interface wrapping\n");
+		} else if (strcmp(name, "SteamInternal_CreateInterface") == 0) {
+			g_pRealSteamInternal_CreateInterface = (tSteamInternal_CreateInterface)dst;
+			dst = (void *)&hkSteamInternal_CreateInterface;
+			LOG("[DSE-DLL] Intercepted SteamInternal_CreateInterface export for coldloader interface wrapping\n");
+		}
+
 		trampolines[0] = 0xFF;
 		trampolines[1] = 0x25;
 		trampolines[2] = 0x00;
@@ -184,7 +277,16 @@ static int HookAllExports(HMODULE hSource, HMODULE hTarget) {
 		trampolines[5] = 0x00;
 		*(void **)(&trampolines[6]) = dst;
 
-		DWORD newRva = (DWORD)((BYTE *)trampolines - (BYTE *)hSource);
+		uintptr_t delta = (uintptr_t)trampolines - (uintptr_t)hSource;
+		if ((uintptr_t)trampolines < (uintptr_t)hSource || delta > 0xFFFFFFFFull) {
+			LOG("[DSE-DLL] Failed to hook export %s: trampoline %p is not encodable as EAT RVA\n",
+				name, trampolines);
+			failed++;
+			trampolines += 14;
+			continue;
+		}
+
+		DWORD newRva = (DWORD)delta;
 		funcs[ords[i]] = newRva;
 
 		trampolines += 14;
@@ -192,6 +294,11 @@ static int HookAllExports(HMODULE hSource, HMODULE hTarget) {
 	}
 
 	VirtualProtect(funcs, expDir->NumberOfFunctions * sizeof(DWORD), oldProt, &oldProt);
+	DWORD trampOldProt = 0;
+	FlushInstructionCache(GetCurrentProcess(), trampolineBase, trampolineBytes);
+	if (!VirtualProtect(trampolineBase, trampolineBytes, PAGE_EXECUTE_READ, &trampOldProt)) {
+		LOG("[DSE-DLL] Failed to set EAT trampolines RX: %lu\n", GetLastError());
+	}
 
 	LOG("[DSE-DLL] Export forwarding : %d hooked, %d skipped, %d failed\n",
 		hooked, skipped, failed);
@@ -201,6 +308,120 @@ static int HookAllExports(HMODULE hSource, HMODULE hTarget) {
 typedef HMODULE(WINAPI *fnLoadLibraryExW)(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags);
 static fnLoadLibraryExW oLoadLibraryExW = nullptr;
 
+static volatile LONG s_steam_hook_state = 0; // 0 = not started, 1 = in progress, 2 = ready
+
+static void SetupSteamClientForwarding(HMODULE hEmulator) {
+	if (!hEmulator)
+		return;
+	if (InterlockedCompareExchange(&s_steam_hook_state, 1, 0) != 0)
+		return;
+
+	bool setupOk = false;
+
+	LPCWSTR dllName = L"steamclient64.dll";
+	g_hEmulatorClient = hEmulator;
+
+	WCHAR loadedPath[MAX_PATH] = {0};
+	GetModuleFileNameW(hEmulator, loadedPath, MAX_PATH);
+	LOG("[DSE-DLL] %ls emulator loaded at %p\n", dllName, hEmulator);
+	LOG("[DSE-DLL] Steam emulator path: %ls\n", loadedPath);
+
+	LoadSteamConfigFromDll(hEmulator);
+
+	WCHAR steamDir[MAX_PATH]{};
+	WCHAR realPath[MAX_PATH]{};
+	WCHAR fakeDllName[64]{};
+	WCHAR tempPath[MAX_PATH]{};
+	fnLoadLibraryExW pLoadLib = oLoadLibraryExW ? oLoadLibraryExW : (fnLoadLibraryExW)&LoadLibraryExW;
+	HMODULE hReal = nullptr;
+	int count = 0;
+	bool aliasCreated = false;
+
+	if (!GetConfiguredSteamDir(steamDir, ARRAYSIZE(steamDir)))
+		goto done;
+
+	if (!PathCombineW(realPath, steamDir, dllName)) {
+		LOG("[DSE-DLL] Steam client path is too long\n");
+		goto done;
+	}
+
+	if (GetFileAttributesW(realPath) == INVALID_FILE_ATTRIBUTES) {
+		LOG("[DSE-DLL] Steam %ls not found: %ls\n", dllName, realPath);
+		goto done;
+	}
+	LOG("[DSE-DLL] Steam %ls: %ls\n", dllName, realPath);
+
+	if (FAILED(StringCchPrintfW(fakeDllName, ARRAYSIZE(fakeDllName),
+								L"steamclient64_valve_%lu.dll", GetCurrentProcessId()))) {
+		LOG("[DSE-DLL] Failed to build real Steam DLL alias name\n");
+		goto done;
+	}
+
+	if (!PathCombineW(tempPath, steamDir, fakeDllName)) {
+		LOG("[DSE-DLL] Real Steam DLL alias path is too long\n");
+		goto done;
+	}
+
+	if (GetFileAttributesW(tempPath) == INVALID_FILE_ATTRIBUTES) {
+		if (!CreateHardLinkW(tempPath, realPath, NULL)) {
+			DWORD hardlinkErr = GetLastError();
+			LOG("[DSE-DLL] Failed to create hard link for real Steam DLL: %lu\n", hardlinkErr);
+			if (!CopyFileW(realPath, tempPath, FALSE)) {
+				LOG("[DSE-DLL] Fallback copy also failed: %lu\n", GetLastError());
+				goto done;
+			}
+		}
+		aliasCreated = true;
+	} else {
+		LOG("[DSE-DLL] Reusing existing real Steam DLL alias: %ls\n", tempPath);
+	}
+
+	hReal = pLoadLib(tempPath, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+	if (!hReal) {
+		LOG("[DSE-DLL] Failed to load temp Steam DLL: %lu\n", GetLastError());
+		goto done;
+	}
+	LOG("[DSE-DLL] Steam loaded at %p from %ls\n", hReal, tempPath);
+	if (aliasCreated && !MoveFileExW(tempPath, nullptr, MOVEFILE_DELAY_UNTIL_REBOOT)) {
+		LOG("[DSE-DLL] Could not schedule Steam DLL alias cleanup: %lu\n", GetLastError());
+	}
+	g_hRealSteamClient = hReal;
+
+	if (!g_config.coldloaderhooks) {
+		RenameLdrEntry(hEmulator, dllName, true);
+	}
+
+	count = HookAllExports(hEmulator, hReal);
+	if (count > 0) {
+		MH_EnableHook(MH_ALL_HOOKS);
+		LOG("[DSE-DLL] %d emulator exports now forwarding to real %ls\n", count, dllName);
+	} else {
+		LOG("[DSE-DLL] No exports hooked for %ls!\n", dllName);
+	}
+	HideLdrEntry(hReal);
+	setupOk = count > 0;
+
+	if (g_config.coldloaderhooks && g_pRealCreateInterface) {
+		const char *client_versions[] = {"SteamClient021", "SteamClient020", "SteamClient019", "SteamClient018", "SteamClient017", "SteamClient016", "SteamClient015", nullptr};
+		for (int i = 0; client_versions[i]; i++) {
+			int code = 0;
+			void *pClient = g_pRealCreateInterface(client_versions[i], &code);
+			if (pClient) {
+				LOG("[DSE-DLL] Pre-hooked existing ISteamClient via %s @ %p\n", client_versions[i], pClient);
+				HookInterface_ISteamClient(pClient, client_versions[i]);
+				break;
+			}
+		}
+	}
+
+done:
+	InterlockedExchange(&s_steam_hook_state, setupOk ? 2 : 0);
+	if (!setupOk) {
+		g_hRealSteamClient = nullptr;
+		LOG("[DSE-DLL] Steam client forwarding setup did not complete; will retry on next load\n");
+	}
+}
+
 static HMODULE WINAPI hkLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags) {
 	bool redirected = false;
 	WCHAR emuPath[MAX_PATH] = {0};
@@ -209,15 +430,17 @@ static HMODULE WINAPI hkLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWOR
 	bool isSteamClient = lpLibFileName && StrStrIW(lpLibFileName, L"steamclient64.dll");
 	bool isOverlay = lpLibFileName && StrStrIW(lpLibFileName, L"gameoverlayrenderer64.dll");
 
-	static bool s_steam_hooked = false;
 	static bool s_overlay_hooked = false;
 
-	if (!g_config.coldloaderhooks && !s_steam_hooked && isSteamClient) {
+	if (!g_config.coldloaderhooks &&
+		InterlockedCompareExchange(&s_steam_hook_state, 0, 0) == 0 && isSteamClient) {
 		GetModuleFileNameW(g_hModule, emuPath, MAX_PATH);
 		PathRemoveFileSpecW(emuPath);
-		PathAppendW(emuPath, L"steamclient64.dll");
+		if (!PathAppendW(emuPath, L"steamclient64.dll")) {
+			emuPath[0] = L'\0';
+		}
 
-		if (GetFileAttributesW(emuPath) != INVALID_FILE_ATTRIBUTES) {
+		if (emuPath[0] && GetFileAttributesW(emuPath) != INVALID_FILE_ATTRIBUTES) {
 			targetPath = emuPath;
 			dwFlags |= LOAD_WITH_ALTERED_SEARCH_PATH;
 			dwFlags &= ~0x00000080;
@@ -229,22 +452,12 @@ static HMODULE WINAPI hkLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWOR
 	static WCHAR overlayRealPath[MAX_PATH] = {0};
 	if (isOverlay && !s_overlay_hooked) {
 		if (overlayRealPath[0] == 0) {
-			WCHAR steamDir[MAX_PATH];
-			if (g_config.coldloaderhooks && g_config.steam_path && string_length(g_config.steam_path) > 0) {
-				wchar_t* tmp = string_to_unicode(string_c_str(g_config.steam_path));
-				if (tmp) {
-					lstrcpyW(steamDir, tmp);
-					free(tmp);
-				} else {
-					steamDir[0] = L'\0';
+			WCHAR steamDir[MAX_PATH]{};
+			if (GetConfiguredSteamDir(steamDir, ARRAYSIZE(steamDir))) {
+				if (!PathCombineW(overlayRealPath, steamDir, L"gameoverlayrenderer64.dll")) {
+					overlayRealPath[0] = L'\0';
 				}
-			} else {
-				GetSteamInstallPath(steamDir, MAX_PATH);
 			}
-			for (WCHAR *p = steamDir; *p; p++)
-				if (*p == L'/')
-					*p = L'\\';
-			PathCombineW(overlayRealPath, steamDir, L"gameoverlayrenderer64.dll");
 		}
 
 		if (GetFileAttributesW(overlayRealPath) != INVALID_FILE_ATTRIBUTES) {
@@ -262,81 +475,9 @@ static HMODULE WINAPI hkLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWOR
 		LOG("[DSE-DLL] Redirected LoadLibraryExW failed! GetLastError = %lu\n", GetLastError());
 	}
 
-	if (hModule && (isSteamClient && !s_steam_hooked)) {
-		s_steam_hooked = true;
-
-		LPCWSTR dllName = L"steamclient64.dll";
-		LPCWSTR fakeDllName = L"steamclient64_valve.dll";
-
-		HMODULE hEmulator = hModule;
-		g_hEmulatorClient = hModule;
-
-		WCHAR loadedPath[MAX_PATH] = {0};
-		GetModuleFileNameW(hModule, loadedPath, MAX_PATH);
-		LOG("[DSE-DLL] %ls emulator loaded at %p\n", dllName, hEmulator);
-		LOG("[DSE-DLL] Steam emulator path: %ls\n", loadedPath);
-
-		WCHAR steamDir[MAX_PATH];
-		if (g_config.coldloaderhooks && g_config.steam_path && string_length(g_config.steam_path) > 0) {
-			wchar_t* tmp = string_to_unicode(string_c_str(g_config.steam_path));
-			if (tmp) {
-				lstrcpyW(steamDir, tmp);
-				free(tmp);
-			} else {
-				steamDir[0] = L'\0';
-			}
-		} else if (!GetSteamInstallPath(steamDir, MAX_PATH)) {
-			LOG("[DSE-DLL] Cannot find Steam install path in registry\n");
-			return hModule;
-		}
-
-		for (WCHAR *p = steamDir; *p; p++)
-			if (*p == L'/')
-				*p = L'\\';
-
-		WCHAR realPath[MAX_PATH];
-		PathCombineW(realPath, steamDir, dllName);
-
-		if (GetFileAttributesW(realPath) == INVALID_FILE_ATTRIBUTES) {
-			LOG("[DSE-DLL] Steam %ls not found: %ls\n", dllName, realPath);
-			return hModule;
-		}
-		LOG("[DSE-DLL] Steam %ls: %ls\n", dllName, realPath);
-
-		WCHAR tempPath[MAX_PATH];
-		lstrcpyW(tempPath, steamDir);
-		PathAppendW(tempPath, fakeDllName);
-
-		DeleteFileW(tempPath);
-		if (!CreateHardLinkW(tempPath, realPath, NULL)) {
-			LOG("[DSE-DLL] Failed to create hard link for real Steam DLL: %lu\n", GetLastError());
-			if (!CopyFileW(realPath, tempPath, FALSE)) {
-				LOG("[DSE-DLL] Fallback copy also failed: %lu\n", GetLastError());
-				return hModule;
-			}
-		}
-
-		HMODULE hReal = oLoadLibraryExW(tempPath, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
-		if (!hReal) {
-			LOG("[DSE-DLL] Failed to load temp Steam DLL: %lu\n", GetLastError());
-			return hModule;
-		}
-		LOG("[DSE-DLL] Steam loaded at %p from %ls\n", hReal, tempPath);
-		if (isSteamClient)
-			g_hRealSteamClient = hReal;
-
-		if (!g_config.coldloaderhooks) {
-			RenameLdrEntry(hEmulator, dllName, true);
-		}
-
-		int count = HookAllExports(hEmulator, hReal);
-		if (count > 0) {
-			MH_EnableHook(MH_ALL_HOOKS);
-			LOG("[DSE-DLL] %d emulator exports now forwarding to real %ls\n", count, dllName);
-		} else {
-			LOG("[DSE-DLL] No exports hooked for %ls!\n", dllName);
-		}
-		HideLdrEntry(hReal);
+	if (hModule && isSteamClient &&
+		InterlockedCompareExchange(&s_steam_hook_state, 0, 0) == 0) {
+		SetupSteamClientForwarding(hModule);
 	}
 	return hModule;
 }
@@ -350,6 +491,35 @@ static FARPROC WINAPI hkGetProcAddress(HMODULE hModule, LPCSTR lpProcName) {
 		proc = oGetProcAddress(g_hRealSteamClient, lpProcName);
 		if (proc && ((ULONG_PTR)lpProcName > 0xFFFF)) {
 			LOG("[DSE-DLL] GetProcAddress forwarded %s to real steamclient\n", lpProcName);
+		}
+	}
+	bool isSteamClientModule =
+		hModule && (hModule == g_hEmulatorClient || hModule == g_hRealSteamClient);
+	if (proc && isSteamClientModule && ((ULONG_PTR)lpProcName > 0xFFFF)) {
+		if (strcmp(lpProcName, "CreateInterface") == 0) {
+			if (g_pRealCreateInterface == nullptr) {
+				if (hModule == g_hRealSteamClient && proc != (FARPROC)&hkCreateInterface) {
+					g_pRealCreateInterface = (tCreateInterface)proc;
+				} else if (g_hRealSteamClient) {
+					g_pRealCreateInterface =
+						(tCreateInterface)oGetProcAddress(g_hRealSteamClient, lpProcName);
+				}
+			}
+			if (g_pRealCreateInterface)
+				return (FARPROC)&hkCreateInterface;
+		}
+		if (strcmp(lpProcName, "SteamInternal_CreateInterface") == 0) {
+			if (g_pRealSteamInternal_CreateInterface == nullptr) {
+				if (hModule == g_hRealSteamClient &&
+					proc != (FARPROC)&hkSteamInternal_CreateInterface) {
+					g_pRealSteamInternal_CreateInterface = (tSteamInternal_CreateInterface)proc;
+				} else if (g_hRealSteamClient) {
+					g_pRealSteamInternal_CreateInterface =
+						(tSteamInternal_CreateInterface)oGetProcAddress(g_hRealSteamClient, lpProcName);
+				}
+			}
+			if (g_pRealSteamInternal_CreateInterface)
+				return (FARPROC)&hkSteamInternal_CreateInterface;
 		}
 	}
 	return proc;
@@ -380,5 +550,11 @@ void InitSteamColdHooks() {
 		MH_CreateHook(pGetProcAddr, (void *)hkGetProcAddress, (void **)&oGetProcAddress);
 		MH_EnableHook(pGetProcAddr);
 		LOG("[DSE-DLL] Hooked GetProcAddress for steamclient internal exports\n");
+	}
+
+	HMODULE hExistingClient = GetModuleHandleW(L"steamclient64.dll");
+	if (hExistingClient) {
+		LOG("[DSE-DLL] steamclient64.dll already in memory at %p - setting up forwarding\n", hExistingClient);
+		SetupSteamClientForwarding(hExistingClient);
 	}
 }
