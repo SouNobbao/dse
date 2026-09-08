@@ -8,6 +8,12 @@
 #include <shlwapi.h>
 #include <windows.h>
 
+#if defined(__clang__) || defined(__GNUC__)
+#define _RETURN_ADDRESS() __builtin_extract_return_addr(__builtin_return_address(0))
+#else
+#define _RETURN_ADDRESS() _ReturnAddress()
+#endif
+
 static bool IsAccessibleRange(const void *address, size_t size, bool writeAccess) {
 	if (!address || size == 0)
 		return false;
@@ -704,7 +710,7 @@ static uint64_t *Hooked_GetSteamID_vtable(void *self, uint64_t *pOut) {
 		LOG("[DSE-DLL] ISteamUser::GetSteamID() could not write pOut=%p\n", out);
 	}
 
-	void *caller = _ReturnAddress();
+	void *caller = _RETURN_ADDRESS();
 	void *origFunc = reinterpret_cast<void *>(origFn ? origFn : Orig_GetSteamID_vtable);
 
 	char callerName[MAX_PATH + 32]{};
