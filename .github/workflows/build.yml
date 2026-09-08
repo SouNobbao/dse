@@ -27,7 +27,7 @@ jobs:
         packages: upx-ucl 7zip
 
     - name: Cache llvm-mingw
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       id: cache-llvm-mingw
       with:
         path: llvm-mingw-20251216-ucrt-ubuntu-22.04-x86_64
@@ -330,7 +330,7 @@ jobs:
     
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     - name: Download Linux/MinGW artifacts for MSVC job
       uses: actions/download-artifact@v8
@@ -418,7 +418,7 @@ jobs:
         Remove-Item -Recurse -Force $tmp
 
     - name: Upload MSVC artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: dse-x64-msvc
         path: release/
