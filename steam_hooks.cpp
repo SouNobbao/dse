@@ -8,6 +8,76 @@
 #include <shlwapi.h>
 #include <windows.h>
 
+static bool IsAccessibleRange(const void *address, size_t size, bool writeAccess) {
+	if (!address || size == 0)
+		return false;
+
+	uintptr_t current = reinterpret_cast<uintptr_t>(address);
+	if (current + size < current)
+		return false;
+	const uintptr_t end = current + size;
+
+	while (current < end) {
+		MEMORY_BASIC_INFORMATION mbi{};
+		if (VirtualQuery(reinterpret_cast<const void *>(current), &mbi, sizeof(mbi)) != sizeof(mbi) ||
+			mbi.State != MEM_COMMIT || (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)))
+			return false;
+
+		const DWORD protection = mbi.Protect & 0xff;
+		const bool readable = protection == PAGE_READONLY || protection == PAGE_READWRITE ||
+			protection == PAGE_WRITECOPY || protection == PAGE_EXECUTE_READ ||
+			protection == PAGE_EXECUTE_READWRITE || protection == PAGE_EXECUTE_WRITECOPY;
+		const bool writable = protection == PAGE_READWRITE || protection == PAGE_WRITECOPY ||
+			protection == PAGE_EXECUTE_READWRITE || protection == PAGE_EXECUTE_WRITECOPY;
+		if (!readable || (writeAccess && !writable))
+			return false;
+
+		const uintptr_t regionEnd = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+		if (regionEnd <= current)
+			return false;
+		current = regionEnd < end ? regionEnd : end;
+	}
+	return true;
+}
+
+template <typename T>
+static bool TryReadValue(const T *source, T *destination) {
+	if (!source || !destination)
+		return false;
+#if defined(_MSC_VER) && !defined(__clang__)
+	__try {
+		*destination = *source;
+		return true;
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		return false;
+	}
+#else
+	if (!IsAccessibleRange(source, sizeof(T), false))
+		return false;
+	*destination = *source;
+	return true;
+#endif
+}
+
+template <typename T>
+static bool TryWriteValue(T *destination, const T &value) {
+	if (!destination)
+		return false;
+#if defined(_MSC_VER) && !defined(__clang__)
+	__try {
+		*destination = value;
+		return true;
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		return false;
+	}
+#else
+	if (!IsAccessibleRange(destination, sizeof(T), true))
+		return false;
+	*destination = value;
+	return true;
+#endif
+}
+
 
 static uint64_t g_fakeSteamID = 76561197960287930ULL; // default SteamID
 static bool g_hasConfiguredSteamID = false;
@@ -444,8 +514,7 @@ static void LogCallerCode(void *caller) {
 
 	char line[512]{};
 	size_t used = 0;
-	__try {
-		for (int offset = -16; offset < 16 && used < sizeof(line); ++offset) {
+	for (int offset = -16; offset < 16 && used < sizeof(line); ++offset) {
 			if (offset == 0) {
 				int written = _snprintf_s(line + used, sizeof(line) - used,
 									  _TRUNCATE, "[RET] ");
@@ -453,16 +522,17 @@ static void LogCallerCode(void *caller) {
 					used += (size_t)written;
 			}
 
-			unsigned char byte = *(reinterpret_cast<unsigned char *>(caller) + offset);
+			unsigned char byte = 0;
+			if (!TryReadValue(reinterpret_cast<unsigned char *>(caller) + offset, &byte)) {
+				LOG("[DSE-DLL]   caller code unavailable at %p\n", caller);
+				return;
+			}
 			int written = _snprintf_s(line + used, sizeof(line) - used,
 								  _TRUNCATE, "%02X ", byte);
 			if (written > 0)
 				used += (size_t)written;
-		}
-		LOG("[DSE-DLL]   caller code (-16..+16): %s\n", line);
-	} __except (EXCEPTION_EXECUTE_HANDLER) {
-		LOG("[DSE-DLL]   caller code unavailable at %p\n", caller);
 	}
+	LOG("[DSE-DLL]   caller code (-16..+16): %s\n", line);
 }
 
 enum {
@@ -507,9 +577,7 @@ static GenericVTableSwap *BeginGenericVTableSwapLocked(void *pInterface, size_t 
 	AcquireSRWLockExclusive(&g_vtableSwapLock);
 
 	void **vtable = nullptr;
-	__try {
-		vtable = *(void ***)pInterface;
-	} __except (EXCEPTION_EXECUTE_HANDLER) {
+	if (!TryReadValue(reinterpret_cast<void ***>(pInterface), &vtable)) {
 		ReleaseSRWLockExclusive(&g_vtableSwapLock);
 		return nullptr;
 	}
@@ -539,15 +607,11 @@ static GenericVTableSwap *BeginGenericVTableSwapLocked(void *pInterface, size_t 
 		numSlots = kMaxGenericVTableSlots;
 
 	void **fakeVTable = (void **)&slot->storage[2];
-	__try {
-		fakeVTable[-2] = vtable[-2];
-		fakeVTable[-1] = vtable[-1];
-	} __except (EXCEPTION_EXECUTE_HANDLER) {}
+	TryReadValue(vtable - 2, fakeVTable - 2);
+	TryReadValue(vtable - 1, fakeVTable - 1);
 
 	for (size_t i = 0; i < numSlots; i++) {
-		__try {
-			fakeVTable[i] = vtable[i];
-		} __except (EXCEPTION_EXECUTE_HANDLER) {
+		if (!TryReadValue(vtable + i, fakeVTable + i)) {
 			numSlots = i;
 			break;
 		}
@@ -602,11 +666,7 @@ static void *GetGenericOriginalSlotForDetour(void *self, void *detour, void *fal
 	GenericVTableSwap *swap = FindGenericSwapByObjectLocked(self);
 	if (!swap) {
 		void **vtable = nullptr;
-		__try {
-			vtable = *(void ***)self;
-		} __except (EXCEPTION_EXECUTE_HANDLER) {
-			vtable = nullptr;
-		}
+		TryReadValue(reinterpret_cast<void ***>(self), &vtable);
 		if (vtable)
 			swap = FindGenericSwapByFakeVTableLocked(vtable);
 	}
@@ -634,27 +694,18 @@ static uint64_t *Hooked_GetSteamID_vtable(void *self, uint64_t *pOut) {
 			self, (void *)&Hooked_GetSteamID_vtable, (void *)Orig_GetSteamID_vtable);
 	if (origFn) {
 		origFn(self, out);
-		__try {
-			orig = *out;
-		} __except (EXCEPTION_EXECUTE_HANDLER) {
+		if (!TryReadValue(out, &orig)) {
 			orig = 0;
 		}
 	}
 
 	uint64_t ret = SelectSteamID(orig);
-	__try {
-		*out = ret;
-	} __except (EXCEPTION_EXECUTE_HANDLER) {
+	if (!TryWriteValue(out, ret)) {
 		LOG("[DSE-DLL] ISteamUser::GetSteamID() could not write pOut=%p\n", out);
 	}
 
 	void *caller = _ReturnAddress();
-	void *origFunc = nullptr;
-	__try {
-		origFunc = (void *)origFn;
-	} __except (EXCEPTION_EXECUTE_HANDLER) {
-		origFunc = reinterpret_cast<void *>(Orig_GetSteamID_vtable);
-	}
+	void *origFunc = reinterpret_cast<void *>(origFn ? origFn : Orig_GetSteamID_vtable);
 
 	char callerName[MAX_PATH + 32]{};
 	char origName[MAX_PATH + 32]{};
@@ -785,11 +836,9 @@ static void *GetClientOriginalSlot(void *self, int slot, void *fallback) {
 		AcquireSRWLockShared(&g_vtableSwapLock);
 		ClientVTableSwap *swap = FindClientSwapByObjectLocked(self);
 		if (!swap) {
-			__try {
-				swap = FindClientSwapByFakeVTableLocked(*(void ***)self);
-			} __except (EXCEPTION_EXECUTE_HANDLER) {
-				swap = nullptr;
-			}
+			void **vtable = nullptr;
+			if (TryReadValue(reinterpret_cast<void ***>(self), &vtable))
+				swap = FindClientSwapByFakeVTableLocked(vtable);
 		}
 		if (swap && swap->realVTable && (size_t)slot < swap->numSlots)
 			result = swap->realVTable[slot];
@@ -807,11 +856,9 @@ static void *GetClientCallbackOriginal(void *self, void *fallback) {
 	AcquireSRWLockShared(&g_vtableSwapLock);
 	ClientVTableSwap *swap = FindClientSwapByObjectLocked(self);
 	if (!swap) {
-		__try {
-			swap = FindClientSwapByFakeVTableLocked(*(void ***)self);
-		} __except (EXCEPTION_EXECUTE_HANDLER) {
-			swap = nullptr;
-		}
+		void **vtable = nullptr;
+		if (TryReadValue(reinterpret_cast<void ***>(self), &vtable))
+			swap = FindClientSwapByFakeVTableLocked(vtable);
 	}
 	if (swap && swap->realVTable && swap->callbackSlot >= 0 &&
 		(size_t)swap->callbackSlot < swap->numSlots) {
@@ -831,9 +878,7 @@ static ClientVTableSwap *BeginClientVTableSwapLocked(void *pInterface, size_t nu
 	AcquireSRWLockExclusive(&g_vtableSwapLock);
 
 	void **vtable = nullptr;
-	__try {
-		vtable = *(void ***)pInterface;
-	} __except (EXCEPTION_EXECUTE_HANDLER) {
+	if (!TryReadValue(reinterpret_cast<void ***>(pInterface), &vtable)) {
 		ReleaseSRWLockExclusive(&g_vtableSwapLock);
 		return nullptr;
 	}
@@ -863,15 +908,12 @@ static ClientVTableSwap *BeginClientVTableSwapLocked(void *pInterface, size_t nu
 		numSlots = kMaxClientVTableSlots;
 
 	void **fakeVTable = (void **)&slot->storage[2];
-	__try {
-		fakeVTable[-2] = vtable[-2];
-		fakeVTable[-1] = vtable[-1];
-	} __except (EXCEPTION_EXECUTE_HANDLER) {}
+	TryReadValue(vtable - 2, fakeVTable - 2);
+	TryReadValue(vtable - 1, fakeVTable - 1);
 
 	for (size_t i = 0; i < numSlots; i++) {
-		__try {
-			fakeVTable[i] = vtable[i];
-		} __except (EXCEPTION_EXECUTE_HANDLER) {
+		if (!TryReadValue(vtable + i, fakeVTable + i)) {
+			numSlots = i;
 			break;
 		}
 	}
@@ -1193,15 +1235,11 @@ static void SwapVTable(void *pInterface, void ***pFakeVTableOut, void ***pRealVT
 	void **fakeVTable = &staticBuffer[2];
 
 	// Copy RTTI metadata and the VTable itself
-	__try {
-		fakeVTable[-2] = vtable[-2]; // Sometimes useful
-		fakeVTable[-1] = vtable[-1]; // RTTI CompleteObjectLocator
-	} __except (EXCEPTION_EXECUTE_HANDLER) {}
+	TryReadValue(vtable - 2, fakeVTable - 2); // Sometimes useful
+	TryReadValue(vtable - 1, fakeVTable - 1); // RTTI CompleteObjectLocator
 
 	for (size_t i = 0; i < numSlots; i++) {
-		__try {
-			fakeVTable[i] = vtable[i];
-		} __except (EXCEPTION_EXECUTE_HANDLER) {
+		if (!TryReadValue(vtable + i, fakeVTable + i)) {
 			break;
 		}
 	}
@@ -1495,9 +1533,7 @@ static void HookInterface_ISteamClient(void *pInterface, const char *pszVersion)
 	if (!pInterface)
 		return;
 	void **vtable = nullptr;
-	__try {
-		vtable = *(void ***)pInterface;
-	} __except (EXCEPTION_EXECUTE_HANDLER) {
+	if (!TryReadValue(reinterpret_cast<void ***>(pInterface), &vtable)) {
 		return;
 	}
 	LOG("[DSE-DLL] Intercepted ISteamClient vtable at %p (%s)\n",
@@ -2183,8 +2219,7 @@ static void InitSteamHooks() {
 		HookSteamAPI(hExisting);
 		return;
 	}
-	// LoadLibraryA/W are separate exports; a direct A call bypasses a W-only
-	// detour, so all four entry points must be covered.
+
 	MH_CreateHookApi(L"kernel32.dll", "LoadLibraryA",
 					 (LPVOID)&Hooked_LoadLibraryA, (LPVOID *)&Orig_LoadLibraryA);
 	MH_CreateHookApi(L"kernel32.dll", "LoadLibraryW",
