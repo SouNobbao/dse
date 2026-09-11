@@ -162,3 +162,7 @@ The files provided in `extras` come from the following places
 - pe_reader > [LIEF](https://github.com/lief-project/LIEF)
 - steamclient_loader_x64.exe > [gbe_fork](https://github.com/Detanup01/gbe_fork/)
 - hypervisor-launcher.exe > [hypervisor-launcher](https://git.denuvosanctuary.com/andreh/hypervisor-launcher/)
+
+### Inspiration / Similar Project(s)
+
+- [VXR/HV-PlugNPlay](https://codeberg.org/vrx/HV-PlugNPlay)
