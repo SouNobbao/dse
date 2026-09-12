@@ -352,7 +352,7 @@ static void SetupSteamClientForwarding(HMODULE hEmulator) {
 	LOG("[DSE-DLL] Steam %ls: %ls\n", dllName, realPath);
 
 	if (FAILED(StringCchPrintfW(fakeDllName, ARRAYSIZE(fakeDllName),
-								L"steamclient64_valve_%lu.dll", GetCurrentProcessId()))) {
+								L"steamclient64_valve.dll"))) {
 		LOG("[DSE-DLL] Failed to build real Steam DLL alias name\n");
 		goto done;
 	}
