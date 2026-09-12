@@ -468,7 +468,6 @@ static HMODULE WINAPI hkLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWOR
 		}
 	}
 
-	LOG("[DSE-DLL] LoadLibraryExW called for: %ls\n", targetPath);
 	HMODULE hModule = oLoadLibraryExW(targetPath, hFile, dwFlags);
 
 	if (!hModule && redirected) {
