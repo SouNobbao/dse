@@ -60,7 +60,7 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
 2. Add the DLL to the load list.
 3. Remove `coldclient/loader.dll`.
 4. Use [OpenSteamTool](https://github.com/OpenSteam001/OpenSteamTool).
-5. Put Lua files in `steam/config/lua` and manifests in `steamdepot/cache`.
+5. Put Lua files in `steam/config/lua` and manifests in `steam/depotcache`.
 6. Click Play.
 
 ### In cases where the game only works with coldclient setups (SCDLC/CAP/2k)
