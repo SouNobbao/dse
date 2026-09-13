@@ -2,7 +2,7 @@
 
 ## What dse does
 
-The DLL extracts [`drvloader`](https://codeberg.org/SouNobbao/drvloader-fork) or [`kvc`](https://github.com/wesmar/kvc/releases/tag/latest) and a [temporary executable](https://codeberg.org/SouNobbao/dse/blob/master/elevator.cpp) that's compiled on this repo.
+The DLL extracts [`drvloader`](https://codeberg.org/SouNobbao/drvloader-fork) or [`kvc`](https://github.com/wesmar/kvc/releases/tag/latest) and a [temporary executable](https://codeberg.org/sounobbao/dse/src/branch/master/elevator.cpp) that's compiled on this repo.
 
 Upon opening the game, it checks if you're running under the test-signed setup or you alterady have Driver Signature Enforncement previously off. [checks are here](https://codeberg.org/sounobbao/dse/src/branch/master/checks.cpp)
 
