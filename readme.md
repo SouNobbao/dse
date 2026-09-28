@@ -27,6 +27,11 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
     [LoadDlls]
     0=dse.dll
     ```
+
+    ```
+    artifact.json
+    "load_dlls": ["dse.dll"],
+    ```
 2. Configure `dse.ini` if needed.
 
 ## Steam config setup (overlay + input)
