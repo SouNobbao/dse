@@ -4,15 +4,8 @@
 #include "config.h"
 #include "log.h"
 #include "minhook/include/MinHook.h"
-#include <intrin.h>
 #include <shlwapi.h>
 #include <windows.h>
-
-#if defined(__clang__) || defined(__GNUC__)
-#define _RETURN_ADDRESS() __builtin_extract_return_addr(__builtin_return_address(0))
-#else
-#define _RETURN_ADDRESS() _ReturnAddress()
-#endif
 
 static bool IsAccessibleRange(const void *address, size_t size, bool writeAccess) {
 	if (!address || size == 0)
@@ -492,55 +485,6 @@ static void *Hooked_ISteamClient_GetISteamFriends_flat(void *self, int32_t hStea
 	return p;
 }
 
-static void FormatCodeAddress(void *address, char *buffer, size_t bufferSize) {
-	if (!buffer || bufferSize == 0)
-		return;
-
-	buffer[0] = '\0';
-	HMODULE module = nullptr;
-	if (address &&
-		GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-							   GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-						   reinterpret_cast<LPCSTR>(address), &module)) {
-		char modulePath[MAX_PATH]{};
-		if (GetModuleFileNameA(module, modulePath, ARRAYSIZE(modulePath))) {
-			const char *moduleName = PathFindFileNameA(modulePath);
-			_snprintf_s(buffer, bufferSize, _TRUNCATE, "%s+0x%llX", moduleName,
-						(unsigned long long)((uintptr_t)address - (uintptr_t)module));
-			return;
-		}
-	}
-
-	_snprintf_s(buffer, bufferSize, _TRUNCATE, "unknown+0x0");
-}
-
-static void LogCallerCode(void *caller) {
-	if (!caller)
-		return;
-
-	char line[512]{};
-	size_t used = 0;
-	for (int offset = -16; offset < 16 && used < sizeof(line); ++offset) {
-			if (offset == 0) {
-				int written = _snprintf_s(line + used, sizeof(line) - used,
-									  _TRUNCATE, "[RET] ");
-				if (written > 0)
-					used += (size_t)written;
-			}
-
-			unsigned char byte = 0;
-			if (!TryReadValue(reinterpret_cast<unsigned char *>(caller) + offset, &byte)) {
-				LOG("[DSE-DLL]   caller code unavailable at %p\n", caller);
-				return;
-			}
-			int written = _snprintf_s(line + used, sizeof(line) - used,
-								  _TRUNCATE, "%02X ", byte);
-			if (written > 0)
-				used += (size_t)written;
-	}
-	LOG("[DSE-DLL]   caller code (-16..+16): %s\n", line);
-}
-
 enum {
 	kMaxGenericVTableSlots = 120,
 	kMaxGenericVTableSwaps = 64
@@ -708,20 +652,10 @@ static uint64_t *Hooked_GetSteamID_vtable(void *self, uint64_t *pOut) {
 	uint64_t ret = SelectSteamID(orig);
 	if (!TryWriteValue(out, ret)) {
 		LOG("[DSE-DLL] ISteamUser::GetSteamID() could not write pOut=%p\n", out);
+	} else {
+		LOG("[DSE-DLL] ISteamUser::GetSteamID() orig=%llu -> %llu\n",
+			(unsigned long long)orig, (unsigned long long)ret);
 	}
-
-	void *caller = _RETURN_ADDRESS();
-	void *origFunc = reinterpret_cast<void *>(origFn ? origFn : Orig_GetSteamID_vtable);
-
-	char callerName[MAX_PATH + 32]{};
-	char origName[MAX_PATH + 32]{};
-	FormatCodeAddress(caller, callerName, ARRAYSIZE(callerName));
-	FormatCodeAddress(origFunc, origName, ARRAYSIZE(origName));
-	LOG("[DSE-DLL] ISteamUser::GetSteamID() orig=%llu -> %llu "
-		"(pOut=%p, caller=%s [%p], origFunc=%s, self=%p, abi=sret-self-first)\n",
-		(unsigned long long)orig, (unsigned long long)ret, pOut, callerName,
-		caller, origName, self);
-	LogCallerCode(caller);
 
 	return out;
 }
