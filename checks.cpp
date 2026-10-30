@@ -107,10 +107,11 @@ void ManageProblematicServices() {
 	if (g_config.problematicServices) {
 		size_t svcCount = vector_size(g_config.problematicServices);
 		for (size_t i = 0; i < svcCount; ++i) {
-			ProblematicService** psvc = (ProblematicService**)vector_at(g_config.problematicServices, i);
-			ProblematicService* svc = psvc ? *psvc : nullptr;
-			if (!svc) continue;
-			wchar_t* namew = string_to_unicode(string_c_str(svc->name));
+			ProblematicService **psvc = (ProblematicService **)vector_at(g_config.problematicServices, i);
+			ProblematicService *svc = psvc ? *psvc : nullptr;
+			if (!svc)
+				continue;
+			wchar_t *namew = string_to_unicode(string_c_str(svc->name));
 			SC_HANDLE hService = namew ? OpenServiceW(hSCM, namew, SERVICE_ALL_ACCESS) : NULL;
 			if (hService) {
 				if (svc->action == ServiceActionType::STOP) {
@@ -125,7 +126,8 @@ void ManageProblematicServices() {
 			} else {
 				LOG("[DSE-DLL] Could not open service %ls (err %lu)\n", namew, GetLastError());
 			}
-			if (namew) free(namew);
+			if (namew)
+				free(namew);
 		}
 	}
 	CloseServiceHandle(hSCM);
@@ -139,11 +141,12 @@ void RestoreProblematicServices() {
 	if (g_config.problematicServices) {
 		size_t svcCount = vector_size(g_config.problematicServices);
 		for (size_t i = 0; i < svcCount; ++i) {
-			ProblematicService** psvc = (ProblematicService**)vector_at(g_config.problematicServices, i);
-			ProblematicService* svc = psvc ? *psvc : nullptr;
-			if (!svc) continue;
+			ProblematicService **psvc = (ProblematicService **)vector_at(g_config.problematicServices, i);
+			ProblematicService *svc = psvc ? *psvc : nullptr;
+			if (!svc)
+				continue;
 			if (svc->action == ServiceActionType::STOP) {
-				wchar_t* namew = string_to_unicode(string_c_str(svc->name));
+				wchar_t *namew = string_to_unicode(string_c_str(svc->name));
 				SC_HANDLE hService = namew ? OpenServiceW(hSCM, namew, SERVICE_ALL_ACCESS) : NULL;
 				if (hService) {
 					if (!StartServiceW(hService, 0, nullptr)) {
@@ -158,7 +161,8 @@ void RestoreProblematicServices() {
 					}
 					CloseServiceHandle(hService);
 				}
-				if (namew) free(namew);
+				if (namew)
+					free(namew);
 			}
 		}
 	}
@@ -166,7 +170,8 @@ void RestoreProblematicServices() {
 }
 
 static void KillProcessTreeByName(const wchar_t *name) {
-	if (!name) return;
+	if (!name)
+		return;
 	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 	if (snapshot == INVALID_HANDLE_VALUE)
 		return;
@@ -193,11 +198,13 @@ void ManageProblematicTasks() {
 	if (g_config.problematicTasks) {
 		size_t tcount = vector_size(g_config.problematicTasks);
 		for (size_t i = 0; i < tcount; ++i) {
-			String** pst = (String**)vector_at(g_config.problematicTasks, i);
-			String* stok = pst ? *pst : nullptr;
-			if (!stok) continue;
-			wchar_t* taskw = string_to_unicode(string_c_str(stok));
-			if (!taskw) continue;
+			String **pst = (String **)vector_at(g_config.problematicTasks, i);
+			String *stok = pst ? *pst : nullptr;
+			if (!stok)
+				continue;
+			wchar_t *taskw = string_to_unicode(string_c_str(stok));
+			if (!taskw)
+				continue;
 			KillProcessTreeByName(taskw);
 			free(taskw);
 		}

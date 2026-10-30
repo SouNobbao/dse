@@ -81,7 +81,8 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
 	HANDLE hProc = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)pid);
 	if (!hProc) {
 		LOG("[WATCHDOG] OpenProcess failed! err: %lu\n", GetLastError());
-		if (hWatchdogMutex) CloseHandle(hWatchdogMutex);
+		if (hWatchdogMutex)
+			CloseHandle(hWatchdogMutex);
 		return;
 	}
 
@@ -116,7 +117,8 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
 
 	CloseDseEvents();
 	DeleteFileW(drvPath);
-	if (hWatchdogMutex) CloseHandle(hWatchdogMutex);
+	if (hWatchdogMutex)
+		CloseHandle(hWatchdogMutex);
 	LOG("[WATCHDOG] Exiting.\n");
 	exit(0);
 }

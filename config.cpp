@@ -27,18 +27,20 @@ static bool ReadIniBool(LPCWSTR section, LPCWSTR key, bool defaultVal,
 	return defaultVal;
 }
 
-static void ReadIniStringList(LPCWSTR section, LPCWSTR key, LPCWSTR iniPath, Vector* outList) {
+static void ReadIniStringList(LPCWSTR section, LPCWSTR key, LPCWSTR iniPath, Vector *outList) {
 	WCHAR buf[1024]{};
 	GetPrivateProfileStringW(section, key, L"", buf, ARRAYSIZE(buf), iniPath);
 	WCHAR *ctx = nullptr;
 	WCHAR *tok = wcstok(buf, L",", &ctx);
 	while (tok) {
 		WCHAR *start = tok;
-		while (*start && iswspace((wint_t)*start)) start++;
+		while (*start && iswspace((wint_t)*start))
+			start++;
 		WCHAR *end = start + wcslen(start);
-		while (end > start && iswspace((wint_t)*(end - 1))) *(--end) = L'\0';
+		while (end > start && iswspace((wint_t) * (end - 1)))
+			*(--end) = L'\0';
 		if (*start) {
-			String* str = string_from_unicode(start);
+			String *str = string_from_unicode(start);
 			vector_push_back(outList, &str);
 		}
 		tok = wcstok(nullptr, L",", &ctx);
@@ -87,21 +89,22 @@ void LoadDseConfig(HMODULE hModule) {
 	WCHAR pathBuf[MAX_PATH]{};
 	GetPrivateProfileStringW(L"dse", L"steam_path", L"", pathBuf, ARRAYSIZE(pathBuf), iniPath);
 	if (pathBuf[0]) {
-		String* tmpPath = string_from_unicode(pathBuf);
+		String *tmpPath = string_from_unicode(pathBuf);
 		g_config.steam_path = tmpPath;
 	}
 
 	g_config.reloaded = ReadIniBool(L"dse", L"reloaded", false, iniPath);
 	g_config.logging = ReadIniBool(L"dse", L"logging", false, iniPath);
 
-	Vector* rawServices = vector_create(sizeof(String*));
+	Vector *rawServices = vector_create(sizeof(String *));
 	ReadIniStringList(L"dse", L"problematic_services", iniPath, rawServices);
 	size_t rawCount = vector_size(rawServices);
 	for (size_t ri = 0; ri < rawCount; ++ri) {
-		String** psvc = (String**)vector_at(rawServices, ri);
-		String* svcStr = psvc ? *psvc : nullptr;
-		if (!svcStr) continue;
-		wchar_t* svc_w = string_to_unicode(string_c_str(svcStr));
+		String **psvc = (String **)vector_at(rawServices, ri);
+		String *svcStr = psvc ? *psvc : nullptr;
+		if (!svcStr)
+			continue;
+		wchar_t *svc_w = string_to_unicode(string_c_str(svcStr));
 		if (!svc_w) {
 			string_deallocate(svcStr);
 			continue;
@@ -114,26 +117,30 @@ void LoadDseConfig(HMODULE hModule) {
 			if (dup) {
 				dup[colonIndex] = L'\0';
 				wchar_t *nameStart = dup;
-				while (*nameStart && iswspace((wint_t)*nameStart)) nameStart++;
+				while (*nameStart && iswspace((wint_t)*nameStart))
+					nameStart++;
 				wchar_t *nameEnd = nameStart + wcslen(nameStart);
-				while (nameEnd > nameStart && iswspace((wint_t)*(nameEnd - 1))) *(--nameEnd) = L'\0';
+				while (nameEnd > nameStart && iswspace((wint_t) * (nameEnd - 1)))
+					*(--nameEnd) = L'\0';
 
 				wchar_t *actionStart = dup + colonIndex + 1;
-				while (*actionStart && iswspace((wint_t)*actionStart)) actionStart++;
+				while (*actionStart && iswspace((wint_t)*actionStart))
+					actionStart++;
 				wchar_t *actionEnd = actionStart + wcslen(actionStart);
-				while (actionEnd > actionStart && iswspace((wint_t)*(actionEnd - 1))) *(--actionEnd) = L'\0';
+				while (actionEnd > actionStart && iswspace((wint_t) * (actionEnd - 1)))
+					*(--actionEnd) = L'\0';
 
 				if (*nameStart) {
 					ServiceActionType action = ServiceActionType::STOP;
 					if (_wcsicmp(actionStart, L"DELETE") == 0) {
 						action = ServiceActionType::DELETE_SVC;
 					}
-					String* nameStr = string_from_unicode(nameStart);
-					ProblematicService* ps = new ProblematicService();
+					String *nameStr = string_from_unicode(nameStart);
+					ProblematicService *ps = new ProblematicService();
 					ps->name = nameStr;
 					ps->action = action;
 					if (!g_config.problematicServices)
-						g_config.problematicServices = vector_create(sizeof(ProblematicService*));
+						g_config.problematicServices = vector_create(sizeof(ProblematicService *));
 					vector_push_back(g_config.problematicServices, &ps);
 				}
 				free(dup);
@@ -145,6 +152,6 @@ void LoadDseConfig(HMODULE hModule) {
 	vector_deallocate(rawServices);
 
 	if (!g_config.problematicTasks)
-		g_config.problematicTasks = vector_create(sizeof(String*));
+		g_config.problematicTasks = vector_create(sizeof(String *));
 	ReadIniStringList(L"dse", L"problematic_tasks", iniPath, g_config.problematicTasks);
 }

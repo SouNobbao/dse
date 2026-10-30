@@ -194,7 +194,7 @@ static int HookAllExports(HMODULE hSource, HMODULE hTarget) {
 
 	const size_t trampolineBytes = expDir->NumberOfNames * kTrampolineSize;
 	BYTE *trampolineBase = (BYTE *)AllocateEatTrampolines(hSource, trampolineBytes,
-														 nt->OptionalHeader.SizeOfImage);
+														  nt->OptionalHeader.SizeOfImage);
 	BYTE *trampoline = trampolineBase;
 	if (!trampoline) {
 		LOG("[DSE-DLL] Failed to allocate EAT trampolines above source module base!\n");
@@ -374,8 +374,8 @@ static void SetupSteamClientForwarding(HMODULE hEmulator) {
 	};
 
 	const fnLoadLibraryExW loadLibraryExW = oLoadLibraryExW
-											   ? oLoadLibraryExW
-											   : (fnLoadLibraryExW)&LoadLibraryExW;
+												? oLoadLibraryExW
+												: (fnLoadLibraryExW)&LoadLibraryExW;
 
 	// Locates the real client, loads it under an alias name, forwards the
 	// emulator's exports onto it, then hooks the real client's interfaces.

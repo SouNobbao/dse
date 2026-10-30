@@ -13,14 +13,15 @@ constexpr LPCWSTR kToggledLockFileName = L"dse_toggled.lock";
 constexpr LPCWSTR kElevationScriptName = L"dse_elev.ps1";
 
 inline bool IsPassthroughExe(LPCWSTR exeName) {
-    if (!exeName) return false;
-    return StrStrIW(exeName, L"watchdog.exe") ||
-           StrStrIW(exeName, L"drvloader")   != nullptr ||
-           StrStrIW(exeName, L"crashpad_handler") != nullptr ||
-           StrStrIW(exeName, L"rundll32")     != nullptr ||
-           StrStrIW(exeName, L"wmic")         != nullptr ||
-           StrStrIW(exeName, L"crs-handler")  != nullptr ||
-		   StrStrIW(exeName, L"crash_handler")  != nullptr ||
-		   StrStrIW(exeName, L"crashhandler")  != nullptr ||
-		   StrStrIW(exeName, L"crashreport")  != nullptr;
+	if (!exeName)
+		return false;
+	return StrStrIW(exeName, L"watchdog.exe") ||
+		   StrStrIW(exeName, L"drvloader") != nullptr ||
+		   StrStrIW(exeName, L"crashpad_handler") != nullptr ||
+		   StrStrIW(exeName, L"rundll32") != nullptr ||
+		   StrStrIW(exeName, L"wmic") != nullptr ||
+		   StrStrIW(exeName, L"crs-handler") != nullptr ||
+		   StrStrIW(exeName, L"crash_handler") != nullptr ||
+		   StrStrIW(exeName, L"crashhandler") != nullptr ||
+		   StrStrIW(exeName, L"crashreport") != nullptr;
 }

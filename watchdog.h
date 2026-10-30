@@ -4,8 +4,8 @@
 #include <windows.h>
 
 extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
-                                                           HINSTANCE hinst,
-                                                           LPSTR lpszCmdLine,
-                                                           int nCmdShow);
+														   HINSTANCE hinst,
+														   LPSTR lpszCmdLine,
+														   int nCmdShow);
 
 void SpawnWatchdog(bool wasOffFromStart, bool wasToggled);

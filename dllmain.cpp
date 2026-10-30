@@ -374,8 +374,8 @@ static void OnProcessDetach() {
 	if (g_config.problematicServices) {
 		size_t svcCount = vector_size(g_config.problematicServices);
 		for (size_t i = 0; i < svcCount; ++i) {
-			ProblematicService** pps = (ProblematicService**)vector_at(g_config.problematicServices, i);
-			ProblematicService* ps = pps ? *pps : nullptr;
+			ProblematicService **pps = (ProblematicService **)vector_at(g_config.problematicServices, i);
+			ProblematicService *ps = pps ? *pps : nullptr;
 			if (ps) {
 				if (ps->name) {
 					string_deallocate(ps->name);
@@ -391,8 +391,8 @@ static void OnProcessDetach() {
 	if (g_config.problematicTasks) {
 		size_t tCount = vector_size(g_config.problematicTasks);
 		for (size_t i = 0; i < tCount; ++i) {
-			String** pstr = (String**)vector_at(g_config.problematicTasks, i);
-			String* s = pstr ? *pstr : nullptr;
+			String **pstr = (String **)vector_at(g_config.problematicTasks, i);
+			String *s = pstr ? *pstr : nullptr;
 			if (s) {
 				string_deallocate(s);
 			}

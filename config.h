@@ -12,7 +12,7 @@ enum class ServiceActionType {
 };
 
 struct ProblematicService {
-	String* name;
+	String *name;
 	ServiceActionType action;
 };
 
@@ -21,11 +21,11 @@ struct DseConfig {
 	bool steamHooks;
 	bool reloaded;
 	bool coldloaderhooks;
-	String* steam_path;
+	String *steam_path;
 
 	bool logging;
-	Vector* problematicServices;
-	Vector* problematicTasks;
+	Vector *problematicServices;
+	Vector *problematicTasks;
 };
 
 extern DseConfig g_config;

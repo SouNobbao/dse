@@ -16,4 +16,3 @@ bool IsOtherGameRunning();
 bool CheckAndSetAfterburnerEvent();
 void SetAfterburnerEvent();
 bool WasAfterburnerEventSet();
-

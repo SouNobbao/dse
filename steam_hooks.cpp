@@ -24,10 +24,10 @@ static bool IsAccessibleRange(const void *address, size_t size, bool writeAccess
 
 		const DWORD protection = mbi.Protect & 0xff;
 		const bool readable = protection == PAGE_READONLY || protection == PAGE_READWRITE ||
-			protection == PAGE_WRITECOPY || protection == PAGE_EXECUTE_READ ||
-			protection == PAGE_EXECUTE_READWRITE || protection == PAGE_EXECUTE_WRITECOPY;
+							  protection == PAGE_WRITECOPY || protection == PAGE_EXECUTE_READ ||
+							  protection == PAGE_EXECUTE_READWRITE || protection == PAGE_EXECUTE_WRITECOPY;
 		const bool writable = protection == PAGE_READWRITE || protection == PAGE_WRITECOPY ||
-			protection == PAGE_EXECUTE_READWRITE || protection == PAGE_EXECUTE_WRITECOPY;
+							  protection == PAGE_EXECUTE_READWRITE || protection == PAGE_EXECUTE_WRITECOPY;
 		if (!readable || (writeAccess && !writable))
 			return false;
 
@@ -76,7 +76,6 @@ static bool TryWriteValue(T *destination, const T &value) {
 	return true;
 #endif
 }
-
 
 static uint64_t g_fakeSteamID = 76561197960287930ULL; // default SteamID
 static bool g_hasConfiguredSteamID = false;
@@ -901,27 +900,27 @@ static bool PublishClientVTableSwapLocked(ClientVTableSwap *swap) {
 	return true;
 }
 
-#define HOOK_CLIENT_SLOT(slot)                                                                                                   \
-	typedef void *(*pfn_ClientSlot##slot)(void *self, int32_t hSteamUser, int32_t hSteamPipe, const char *pchVersion);           \
-	static pfn_ClientSlot##slot Orig_ClientSlot##slot = nullptr;                                                                 \
-	static void *Hooked_ClientSlot##slot(void *self, int32_t hSteamUser, int32_t hSteamPipe, const char *pchVersion) {           \
-		pfn_ClientSlot##slot orig = (pfn_ClientSlot##slot)GetClientOriginalSlot(self, slot, (void *)Orig_ClientSlot##slot);      \
-		void *p = orig ? orig(self, hSteamUser, hSteamPipe, pchVersion) : nullptr;                                                \
-		if (p && pchVersion) {                                                                                                   \
-			LOG("[DSE-DLL] ISteamClient::Slot" #slot "(%s) -> %p\n", pchVersion, p);                                             \
-			HookSteamInterfaceByVersion(p, pchVersion);                                                                          \
-		}                                                                                                                        \
-		return p;                                                                                                                \
+#define HOOK_CLIENT_SLOT(slot)                                                                                              \
+	typedef void *(*pfn_ClientSlot##slot)(void *self, int32_t hSteamUser, int32_t hSteamPipe, const char *pchVersion);      \
+	static pfn_ClientSlot##slot Orig_ClientSlot##slot = nullptr;                                                            \
+	static void *Hooked_ClientSlot##slot(void *self, int32_t hSteamUser, int32_t hSteamPipe, const char *pchVersion) {      \
+		pfn_ClientSlot##slot orig = (pfn_ClientSlot##slot)GetClientOriginalSlot(self, slot, (void *)Orig_ClientSlot##slot); \
+		void *p = orig ? orig(self, hSteamUser, hSteamPipe, pchVersion) : nullptr;                                          \
+		if (p && pchVersion) {                                                                                              \
+			LOG("[DSE-DLL] ISteamClient::Slot" #slot "(%s) -> %p\n", pchVersion, p);                                        \
+			HookSteamInterfaceByVersion(p, pchVersion);                                                                     \
+		}                                                                                                                   \
+		return p;                                                                                                           \
 	}
 
-#define HOOK_CLIENT_UTILS_SLOT(slot)                                                                         \
-	typedef void *(*pfn_ClientSlot##slot)(void *self, int32_t hSteamPipe, const char *pchVersion);           \
-	static pfn_ClientSlot##slot Orig_ClientSlot##slot = nullptr;                                             \
-	static void *Hooked_ClientSlot##slot(void *self, int32_t hSteamPipe, const char *pchVersion) {           \
+#define HOOK_CLIENT_UTILS_SLOT(slot)                                                                                        \
+	typedef void *(*pfn_ClientSlot##slot)(void *self, int32_t hSteamPipe, const char *pchVersion);                          \
+	static pfn_ClientSlot##slot Orig_ClientSlot##slot = nullptr;                                                            \
+	static void *Hooked_ClientSlot##slot(void *self, int32_t hSteamPipe, const char *pchVersion) {                          \
 		pfn_ClientSlot##slot orig = (pfn_ClientSlot##slot)GetClientOriginalSlot(self, slot, (void *)Orig_ClientSlot##slot); \
-		void *p = orig ? orig(self, hSteamPipe, pchVersion) : nullptr;                                      \
-		LOG("[DSE-DLL] ISteamClient::Slot" #slot " (utils) -> %p\n", p);                                     \
-		return p;                                                                                            \
+		void *p = orig ? orig(self, hSteamPipe, pchVersion) : nullptr;                                                      \
+		LOG("[DSE-DLL] ISteamClient::Slot" #slot " (utils) -> %p\n", p);                                                    \
+		return p;                                                                                                           \
 	}
 
 typedef void (*pfn_ClientSlot4)(void *self, int32_t hSteamPipe, int32_t hUser);
@@ -1514,7 +1513,7 @@ static void HookInterface_ISteamClient(void *pInterface, const char *pszVersion)
 			g_pISteamClientVTable = realVTable;
 
 #define APPLY_CLIENT_SWAP(slot) \
-		TryHookVTableSlot_Swap(fakeVTable, realVTable, slot, (LPVOID)&Hooked_ClientSlot##slot, (LPVOID *)&Orig_ClientSlot##slot, "ISteamClient::Slot" #slot)
+	TryHookVTableSlot_Swap(fakeVTable, realVTable, slot, (LPVOID) & Hooked_ClientSlot##slot, (LPVOID *)&Orig_ClientSlot##slot, "ISteamClient::Slot" #slot)
 
 		APPLY_CLIENT_SWAP(4); // ReleaseUser
 		APPLY_CLIENT_SWAP(5); // GetISteamUser
@@ -1538,8 +1537,8 @@ static void HookInterface_ISteamClient(void *pInterface, const char *pszVersion)
 		g_pISteamClientVTable = vtable;
 
 #define APPLY_CLIENT_HOOK(slot)                                                                        \
-		MH_CreateHook(vtable[slot], (LPVOID) & Hooked_ClientSlot##slot, (LPVOID *)&Orig_ClientSlot##slot); \
-		MH_EnableHook(vtable[slot])
+	MH_CreateHook(vtable[slot], (LPVOID) & Hooked_ClientSlot##slot, (LPVOID *)&Orig_ClientSlot##slot); \
+	MH_EnableHook(vtable[slot])
 
 		APPLY_CLIENT_HOOK(4); // ReleaseUser
 		APPLY_CLIENT_HOOK(5); // GetISteamUser
