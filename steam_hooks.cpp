@@ -4,6 +4,7 @@
 #include "config.h"
 #include "log.h"
 #include "minhook/include/MinHook.h"
+#include "steam_forwarding.h"
 #include <cstdint>
 #include <shlwapi.h>
 #include <windows.h>
@@ -770,12 +771,8 @@ static ClientVTableSwap *FindClientSwapByFakeVTableLocked(void **vtable) {
 	return nullptr;
 }
 
-// Coldclient and steamApiForward both leave the real Steam code untouched and
-// hook interfaces by swapping vtables instead of MinHook patching.
-static bool UseVTableSwap() { return g_config.coldloaderhooks || g_config.steamApiForward; }
-
 static void *GetClientOriginalSlot(void *self, int slot, void *fallback) {
-	if (UseVTableSwap() && self && slot >= 0 && slot < kMaxClientVTableSlots) {
+	if (self && slot >= 0 && slot < kMaxClientVTableSlots) {
 		void *result = fallback;
 		AcquireSRWLockShared(&g_vtableSwapLock);
 		ClientVTableSwap *swap = FindClientSwapByObjectLocked(self);
@@ -793,7 +790,7 @@ static void *GetClientOriginalSlot(void *self, int slot, void *fallback) {
 }
 
 static void *GetClientCallbackOriginal(void *self, void *fallback) {
-	if (!UseVTableSwap() || !self)
+	if (!self)
 		return fallback;
 
 	void *result = fallback;
@@ -1218,37 +1215,6 @@ static void TryHookVTableSlot_Swap(void **fakeVTable, void **realVTable, int slo
 	LOG("[DSE-DLL]   Swapped %s slot [%d] @ %p -> %p\n", name, slot, realVTable[slot], detour);
 }
 
-// Patch the real function behind vtable[slot] with a global MinHook detour so
-// every caller is spoofed, including ISteamUser instances obtained through
-// paths we never intercepted. If the function body can't be patched (stub /
-// too short), fall back to redirecting only the swapped instance's fake
-// vtable slot.
-static void TryHookSlot_GlobalThenSwap(void **fakeVTable, void **realVTable, int slot, LPVOID detour, LPVOID *orig, const char *name) {
-	if (!realVTable || slot < 0 || !realVTable[slot])
-		return;
-
-	LPVOID tempOrig = nullptr;
-	MH_STATUS status = MH_CreateHook(realVTable[slot], detour, &tempOrig);
-	if (status == MH_OK || status == MH_ERROR_ALREADY_CREATED) {
-		MH_EnableHook(realVTable[slot]);
-		// Keep the first trampoline; on ALREADY_CREATED with a null orig the
-		// detour must not call the patched entry point directly (recursion).
-		if (status == MH_OK && orig)
-			*orig = tempOrig;
-		if (fakeVTable)
-			fakeVTable[slot] = detour;
-		LOG("[DSE-DLL]   Hooked %s slot [%d] @ %p globally (%s)\n", name, slot,
-			realVTable[slot], MH_StatusToString(status));
-	} else {
-		if (orig && !*orig)
-			*orig = realVTable[slot];
-		if (fakeVTable)
-			fakeVTable[slot] = detour;
-		LOG("[DSE-DLL]   Swapped %s slot [%d] @ %p -> %p (global hook failed: %s)\n",
-			name, slot, realVTable[slot], detour, MH_StatusToString(status));
-	}
-}
-
 static void **g_pFakeSteamUserVTable = nullptr;
 static void *g_FakeSteamUserVTableBuffer[102];
 
@@ -1292,26 +1258,13 @@ static void HookInterface_ISteamUser(void *pInterface, const char *pszVersion) {
 		LOG("[DSE-DLL]   UserHasLicenseForApp -> not present in %s\n",
 			pszVersion ? pszVersion : "this interface");
 
-	if (UseVTableSwap()) {
-		TryHookVTableSlot_Swap(fakeVTable, realVTable, loggedOnSlot, (LPVOID)&Hooked_BLoggedOn_vtable,
-							   (LPVOID *)&Orig_BLoggedOn_vtable, "ISteamUser::BLoggedOn");
-		TryHookVTableSlot_Swap(fakeVTable, realVTable, getIDSlot, (LPVOID)&Hooked_GetSteamID_vtable,
-							   (LPVOID *)&Orig_GetSteamID_vtable, "ISteamUser::GetSteamID");
-		if (userHasLicenseSlot >= 0)
-			TryHookVTableSlot_Swap(fakeVTable, realVTable, userHasLicenseSlot, (LPVOID)&Hooked_UserHasLicenseForApp_flat,
-								   nullptr, "ISteamUser::UserHasLicenseForApp");
-	} else {
-		// Global function-body hooks: catch GetSteamID/BLoggedOn calls made through
-		// ANY ISteamUser instance, even ones created before our hooks were live or
-		// obtained through unintercepted paths. Swap entries remain as fallback.
-		TryHookSlot_GlobalThenSwap(fakeVTable, realVTable, loggedOnSlot, (LPVOID)&Hooked_BLoggedOn_vtable,
-								   (LPVOID *)&Orig_BLoggedOn_vtable, "ISteamUser::BLoggedOn");
-		TryHookSlot_GlobalThenSwap(fakeVTable, realVTable, getIDSlot, (LPVOID)&Hooked_GetSteamID_vtable,
-								   (LPVOID *)&Orig_GetSteamID_vtable, "ISteamUser::GetSteamID");
-		if (userHasLicenseSlot >= 0)
-			TryHookSlot_GlobalThenSwap(fakeVTable, realVTable, userHasLicenseSlot, (LPVOID)&Hooked_UserHasLicenseForApp_flat,
-									   nullptr, "ISteamUser::UserHasLicenseForApp");
-	}
+	TryHookVTableSlot_Swap(fakeVTable, realVTable, loggedOnSlot, (LPVOID)&Hooked_BLoggedOn_vtable,
+						   (LPVOID *)&Orig_BLoggedOn_vtable, "ISteamUser::BLoggedOn");
+	TryHookVTableSlot_Swap(fakeVTable, realVTable, getIDSlot, (LPVOID)&Hooked_GetSteamID_vtable,
+						   (LPVOID *)&Orig_GetSteamID_vtable, "ISteamUser::GetSteamID");
+	if (userHasLicenseSlot >= 0)
+		TryHookVTableSlot_Swap(fakeVTable, realVTable, userHasLicenseSlot, (LPVOID)&Hooked_UserHasLicenseForApp_flat,
+							   nullptr, "ISteamUser::UserHasLicenseForApp");
 	PublishGenericVTableSwapLocked(swap);
 }
 
@@ -1338,13 +1291,8 @@ static void HookInterface_ISteamFriends(void *pInterface) {
 
 	// GetPersonaName is slot 0, GetPersonaState is slot 1 (all SteamFriends
 	// versions 010-021). Slot 2 is GetFriendCount.
-	if (UseVTableSwap()) {
-		TryHookVTableSlot_Swap(fakeVTable, realVTable, 1, (LPVOID)&Hooked_GetPersonaState_vtable,
-							   (LPVOID *)&Orig_GetPersonaState_vtable, "ISteamFriends::GetPersonaState");
-	} else {
-		TryHookSlot_GlobalThenSwap(fakeVTable, realVTable, 1, (LPVOID)&Hooked_GetPersonaState_vtable,
-								   (LPVOID *)&Orig_GetPersonaState_vtable, "ISteamFriends::GetPersonaState");
-	}
+	TryHookVTableSlot_Swap(fakeVTable, realVTable, 1, (LPVOID)&Hooked_GetPersonaState_vtable,
+						   (LPVOID *)&Orig_GetPersonaState_vtable, "ISteamFriends::GetPersonaState");
 	PublishGenericVTableSwapLocked(swap);
 }
 
@@ -1378,18 +1326,6 @@ static void **g_pISteamAppsVTable = nullptr;
 static int g_steamAppsVersion = 0;
 static void **g_pFakeSteamAppsVTable = nullptr;
 static void *g_FakeSteamAppsVTableBuffer[102];
-
-static void TryHookVTableSlot(void **vtable, int slot, LPVOID detour, LPVOID *orig, const char *name) {
-	if (!vtable || slot < 0 || !vtable[slot])
-		return;
-	MH_STATUS status = MH_CreateHook(vtable[slot], detour, orig);
-	if (status == MH_OK || status == MH_ERROR_ALREADY_CREATED) {
-		MH_EnableHook(vtable[slot]);
-		LOG("[DSE-DLL]   Hooked %s slot [%d] @ %p (%s)\n", name, slot, vtable[slot], MH_StatusToString(status));
-	} else {
-		LOG("[DSE-DLL]   Failed to hook %s slot [%d] @ %p: %s\n", name, slot, vtable[slot], MH_StatusToString(status));
-	}
-}
 
 static int ParseSteamAppsVersion(const char *pszVersion) {
 	if (!pszVersion)
@@ -1432,11 +1368,7 @@ static void HookInterface_ISteamApps(void *pInterface, const char *pszVersion) {
 		g_steamAppsVersion = ver;
 
 	auto HookAppSlot = [&](int slot, LPVOID detour, LPVOID *orig, const char *name) {
-		if (UseVTableSwap()) {
-			TryHookVTableSlot_Swap(fakeVTable, realVTable, slot, detour, orig, name);
-		} else {
-			TryHookVTableSlot(realVTable, slot, detour, orig, name);
-		}
+		TryHookVTableSlot_Swap(fakeVTable, realVTable, slot, detour, orig, name);
 	};
 
 	if (ver >= 2)
@@ -1507,41 +1439,28 @@ static void HookInterface_ISteamClient(void *pInterface, const char *pszVersion)
 		if (cs.ver == ver) { callbackSlot = cs.slot; break; }
 	}
 
-	if (UseVTableSwap()) {
-		bool freshSwap = false;
-		ClientVTableSwap *swap = BeginClientVTableSwapLocked(pInterface, kMaxClientVTableSlots, &freshSwap);
-		if (swap && !freshSwap)
-			return;
-		if (!swap || !swap->realVTable || !swap->fakeVTable)
-			return;
-		void **realVTable = swap->realVTable;
-		void **fakeVTable = swap->fakeVTable;
-		swap->callbackSlot = callbackSlot;
-		if (!g_pISteamClientVTable)
-			g_pISteamClientVTable = realVTable;
+	bool freshSwap = false;
+	ClientVTableSwap *swap = BeginClientVTableSwapLocked(pInterface, kMaxClientVTableSlots, &freshSwap);
+	if (swap && !freshSwap)
+		return;
+	if (!swap || !swap->realVTable || !swap->fakeVTable)
+		return;
+	void **realVTable = swap->realVTable;
+	void **fakeVTable = swap->fakeVTable;
+	swap->callbackSlot = callbackSlot;
+	if (!g_pISteamClientVTable)
+		g_pISteamClientVTable = realVTable;
 
-		for (const auto &h : kClientSlotHooks) {
-			char label[64];
-			_snprintf_s(label, sizeof(label), _TRUNCATE, "ISteamClient::Slot%d", h.slot);
-			TryHookVTableSlot_Swap(fakeVTable, realVTable, h.slot, h.hookFn, h.origFn, label);
-		}
-
-		if (callbackSlot != -1) {
-			TryHookVTableSlot_Swap(fakeVTable, realVTable, callbackSlot, (LPVOID)&Hooked_SetCallbackCheck, (LPVOID *)&Orig_SetCallbackCheck, "ISteamClient::Set_SteamAPI_CCheckCallbackRegisteredInProcess");
-		}
-		PublishClientVTableSwapLocked(swap);
-	} else {
-		g_pISteamClientVTable = vtable;
-
-		for (const auto &h : kClientSlotHooks) {
-			MH_CreateHook(vtable[h.slot], h.hookFn, h.origFn);
-			MH_EnableHook(vtable[h.slot]);
-		}
-
-		if (callbackSlot != -1) {
-			TryHookVTableSlot(vtable, callbackSlot, (LPVOID)&Hooked_SetCallbackCheck, (LPVOID *)&Orig_SetCallbackCheck, "ISteamClient::Set_SteamAPI_CCheckCallbackRegisteredInProcess");
-		}
+	for (const auto &h : kClientSlotHooks) {
+		char label[64];
+		_snprintf_s(label, sizeof(label), _TRUNCATE, "ISteamClient::Slot%d", h.slot);
+		TryHookVTableSlot_Swap(fakeVTable, realVTable, h.slot, h.hookFn, h.origFn, label);
 	}
+
+	if (callbackSlot != -1) {
+		TryHookVTableSlot_Swap(fakeVTable, realVTable, callbackSlot, (LPVOID)&Hooked_SetCallbackCheck, (LPVOID *)&Orig_SetCallbackCheck, "ISteamClient::Set_SteamAPI_CCheckCallbackRegisteredInProcess");
+	}
+	PublishClientVTableSwapLocked(swap);
 }
 
 static void *
@@ -1703,12 +1622,11 @@ static void PreHookSingletons() {
 	if (!hSteamApi)
 		return;
 
-	// In forward mode trampoline retargeting only catches calls through the
-	// emulator's EAT — the real DLL's own internal calls bypass it.  Pre-hook
-	// every ISteamClient the real DLL can hand out so that vtable-based
-	// GetISteamUser/GetISteamApps/GetISteamFriends go through our accessors,
-	// same as HookRealClientInterfaces does for the coldclient path.
-	if (g_config.steamApiForward && Orig_SteamInternal_CreateInterface) {
+	// Retargeted export trampolines only catch calls through the EAT/IAT; steam_api's
+	// own internal calls bypass them. Pre-hook every ISteamClient it can hand out so
+	// vtable-based GetISteamUser/GetISteamApps/GetISteamFriends go through our
+	// accessors, same as HookRealClientInterfaces does for the coldclient path.
+	if (Orig_SteamInternal_CreateInterface) {
 		static const char *const kClientVersions[] = {
 			"SteamClient021", "SteamClient020", "SteamClient019", "SteamClient018",
 			"SteamClient017", "SteamClient016", "SteamClient015", "SteamClient014",
@@ -1894,10 +1812,10 @@ static const VersionedApiHook kSteamClientHooks[] = {
 
 #undef VH_ENTRY
 
-// steamApiForward: each emulator export is a `jmp [rip+0]; <target>` trampoline
-// into steam_api64_o.dll (steam_forward.cpp). Swapping the target hooks the
-// export without patching code or freezing threads, like the coldclient vtable
-// swap. Exports that stayed on the emulator are not trampolines and are skipped.
+// Each steam_api export is a `jmp [rip+0]; <target>` trampoline: into
+// steam_api64_o.dll with steamApiForward, or into its own code otherwise
+// (HookSteamApiInPlace). Swapping the target hooks the export without patching
+// code or freezing threads. Exports that are not trampolines are skipped.
 static bool RetargetForwardedExport(LPVOID p, LPVOID hookFn, LPVOID *origFn) {
 	static const BYTE kJmpRip[6] = {0xFF, 0x25, 0x00, 0x00, 0x00, 0x00};
 	BYTE *t = (BYTE *)p;
@@ -1913,22 +1831,13 @@ static bool RetargetForwardedExport(LPVOID p, LPVOID hookFn, LPVOID *origFn) {
 	return true;
 }
 
-static bool InstallExportHook(LPVOID p, LPVOID hookFn, LPVOID *origFn) {
-	if (g_config.steamApiForward)
-		return RetargetForwardedExport(p, hookFn, origFn);
-	if (MH_CreateHook(p, hookFn, origFn) != MH_OK)
-		return false;
-	MH_EnableHook(p);
-	return true;
-}
-
 template<size_t N>
 static void HookVersionedExports(HMODULE h, const char *prefix, const VersionedApiHook (&hooks)[N]) {
 	char name[128];
 	for (size_t i = 0; i < N; i++) {
 		_snprintf_s(name, sizeof(name), _TRUNCATE, "%s%s", prefix, hooks[i].suffix);
 		auto p = (LPVOID)GetProcAddress(h, name);
-		if (p && InstallExportHook(p, hooks[i].hookFn, hooks[i].origFn))
+		if (p && RetargetForwardedExport(p, hooks[i].hookFn, hooks[i].origFn))
 			LOG("[DSE-DLL]   Hooked %s\n", name);
 	}
 }
@@ -1997,7 +1906,7 @@ static void HookSteamAPI(HMODULE hSteamApi) {
 			continue;
 		auto p = (LPVOID)GetProcAddress(hSteamApi, h.exportName);
 		if (p) {
-			if (InstallExportHook(p, h.hookFn, h.origFn))
+			if (RetargetForwardedExport(p, h.hookFn, h.origFn))
 				LOG("[DSE-DLL]   Hooked %s\n", h.exportName);
 			else
 				LOG("[DSE-DLL]   Failed to hook %s\n", h.exportName);
@@ -2011,10 +1920,22 @@ static void HookSteamAPI(HMODULE hSteamApi) {
 	HookVersionedExports(hSteamApi, "SteamAPI_SteamClient_v", kSteamClientHooks);
 
 	auto pSteamClient = (LPVOID)GetProcAddress(hSteamApi, "SteamClient");
-	if (pSteamClient && InstallExportHook(pSteamClient, (LPVOID)&Hooked_SteamClient021, (LPVOID *)&Orig_SteamClient021))
+	if (pSteamClient && RetargetForwardedExport(pSteamClient, (LPVOID)&Hooked_SteamClient021, (LPVOID *)&Orig_SteamClient021))
 		LOG("[DSE-DLL]   Hooked SteamClient (flat API)\n");
 
 	LOG("[DSE-DLL] Steam API hooks installed.\n");
+}
+
+static void HookSteamApiInPlace(HMODULE hSteamApi, bool rebindImports) {
+	if (g_steamHooked || HookAllExports(hSteamApi, hSteamApi) <= 0)
+		return;
+	HookSteamAPI(hSteamApi);
+	if (rebindImports) {
+		char path[MAX_PATH]{};
+		GetModuleFileNameA(hSteamApi, path, MAX_PATH);
+		LOG("[DSE-DLL] %d IAT entries rebound to steam_api trampolines\n",
+			RebindImports(PathFindFileNameA(path), hSteamApi));
+	}
 }
 
 // LoadLibrary hooks
@@ -2054,7 +1975,7 @@ HMODULE WINAPI Hooked_LoadLibraryA(LPCSTR lpLibFileName) {
 	HMODULE hMod = Orig_LoadLibraryA(lpLibFileName);
 	if (hMod && !g_steamHooked && IsSteamApiDllA(lpLibFileName)) {
 		LOG("[DSE-DLL] LoadLibraryA caught: %s\n", lpLibFileName);
-		HookSteamAPI(hMod);
+		HookSteamApiInPlace(hMod, false);
 	}
 	return hMod;
 }
@@ -2063,7 +1984,7 @@ HMODULE WINAPI Hooked_LoadLibraryW(LPCWSTR lpLibFileName) {
 	HMODULE hMod = Orig_LoadLibraryW(lpLibFileName);
 	if (hMod && !g_steamHooked && IsSteamApiDll(lpLibFileName)) {
 		LOG("[DSE-DLL] LoadLibraryW caught: %ls\n", lpLibFileName);
-		HookSteamAPI(hMod);
+		HookSteamApiInPlace(hMod, false);
 	}
 	return hMod;
 }
@@ -2077,7 +1998,7 @@ HMODULE WINAPI Hooked_LoadLibraryExA(LPCSTR lpLibFileName, HANDLE hFile,
 	if (hMod && !g_steamHooked && IsSteamApiDllA(lpLibFileName) &&
 		!(dwFlags & kDataFlags)) {
 		LOG("[DSE-DLL] LoadLibraryExA caught: %s\n", lpLibFileName);
-		HookSteamAPI(hMod);
+		HookSteamApiInPlace(hMod, false);
 	}
 	return hMod;
 }
@@ -2091,7 +2012,7 @@ HMODULE WINAPI Hooked_LoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile,
 	if (hMod && !g_steamHooked && IsSteamApiDll(lpLibFileName) &&
 		!(dwFlags & kDataFlags)) {
 		LOG("[DSE-DLL] LoadLibraryExW caught: %ls\n", lpLibFileName);
-		HookSteamAPI(hMod);
+		HookSteamApiInPlace(hMod, false);
 	}
 	return hMod;
 }
@@ -2115,7 +2036,7 @@ static void InitSteamHooks() {
 		hExisting = GetModuleHandleW(L"steam_api.dll");
 	if (hExisting) {
 		LOG("[DSE-DLL] steam_api already loaded - hooking now\n");
-		HookSteamAPI(hExisting);
+		HookSteamApiInPlace(hExisting, true);
 		return;
 	}
 

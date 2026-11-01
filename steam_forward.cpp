@@ -3,6 +3,7 @@
 #include "log.h"
 #include "minhook/include/MinHook.h"
 #include "peb_struct.h"
+#include "steam_forwarding.h"
 #include <shlwapi.h>
 #include <windows.h>
 
