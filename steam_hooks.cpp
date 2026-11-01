@@ -7,6 +7,7 @@
 #include "steam_forwarding.h"
 #include <cstdint>
 #include <shlwapi.h>
+#include <utility>
 #include <windows.h>
 
 static bool IsAccessibleRange(const void *address, size_t size, bool writeAccess) {
@@ -1532,88 +1533,68 @@ static int32_t Hooked_SteamAPI_GetHSteamUser() {
 }
 
 // Dynamic versioned accessor hooks
-#define HOOK_STEAMUSER(ver)                                              \
-	typedef void *(*pfn_SteamUser##ver)();                               \
-	static pfn_SteamUser##ver Orig_SteamUser##ver = nullptr;             \
-	static void *Hooked_SteamUser##ver() {                               \
-		void *p = Orig_SteamUser##ver ? Orig_SteamUser##ver() : nullptr; \
-		HookInterface_ISteamUser(p, "SteamUser" #ver);                   \
-		return p;                                                        \
-	}
+// Versioned flat accessors: SteamAPI_<export>vNNN() each return an interface
+// pointer. One thunk per (family, version) is generated from the family's suffix
+// list below; it calls the saved original accessor to get the pointer, then hands
+// it to Hook tagged with <version>NNN (the slot resolvers need the exact
+// version). Adding a version is one line in kSuffixes.
+struct FamSteamUser {
+	static constexpr const char *kExport = "SteamAPI_SteamUser_v";
+	static constexpr const char *kVersion = "SteamUser";
+	static constexpr const char *kSuffixes[] = {
+		"015", "016", "017", "018", "019", "020", "021", "022", "023", "024", "025"};
+	static constexpr size_t kCount = sizeof(kSuffixes) / sizeof(*kSuffixes);
+	static inline void *origs[kCount]{};
+	static void Hook(void *p, const char *v) { HookInterface_ISteamUser(p, v); }
+};
 
-HOOK_STEAMUSER(015);
-HOOK_STEAMUSER(016);
-HOOK_STEAMUSER(017);
-HOOK_STEAMUSER(018);
-HOOK_STEAMUSER(019);
-HOOK_STEAMUSER(020);
-HOOK_STEAMUSER(021);
-HOOK_STEAMUSER(022);
-HOOK_STEAMUSER(023);
-HOOK_STEAMUSER(024);
-HOOK_STEAMUSER(025);
+struct FamSteamFriends {
+	static constexpr const char *kExport = "SteamAPI_SteamFriends_v";
+	static constexpr const char *kVersion = "SteamFriends";
+	static constexpr const char *kSuffixes[] = {
+		"010", "011", "012", "013", "014", "015", "016", "017", "018", "019", "020"};
+	static constexpr size_t kCount = sizeof(kSuffixes) / sizeof(*kSuffixes);
+	static inline void *origs[kCount]{};
+	static void Hook(void *p, const char *) { HookInterface_ISteamFriends(p); }
+};
 
-#define HOOK_STEAMFRIENDS(ver)                                                 \
-	typedef void *(*pfn_SteamFriends##ver)();                                  \
-	static pfn_SteamFriends##ver Orig_SteamFriends##ver = nullptr;             \
-	static void *Hooked_SteamFriends##ver() {                                  \
-		void *p = Orig_SteamFriends##ver ? Orig_SteamFriends##ver() : nullptr; \
-		HookInterface_ISteamFriends(p);                                        \
-		return p;                                                              \
-	}
+struct FamSteamApps {
+	static constexpr const char *kExport = "SteamAPI_SteamApps_v";
+	static constexpr const char *kVersion = "STEAMAPPS_INTERFACE_VERSION";
+	static constexpr const char *kSuffixes[] = {
+		"001", "002", "003", "004", "005", "006", "007", "008", "009"};
+	static constexpr size_t kCount = sizeof(kSuffixes) / sizeof(*kSuffixes);
+	static inline void *origs[kCount]{};
+	static void Hook(void *p, const char *v) { HookInterface_ISteamApps(p, v); }
+};
 
-HOOK_STEAMFRIENDS(010);
-HOOK_STEAMFRIENDS(011);
-HOOK_STEAMFRIENDS(012);
-HOOK_STEAMFRIENDS(013);
-HOOK_STEAMFRIENDS(014);
-HOOK_STEAMFRIENDS(015);
-HOOK_STEAMFRIENDS(016);
-HOOK_STEAMFRIENDS(017);
-HOOK_STEAMFRIENDS(018);
-HOOK_STEAMFRIENDS(019);
-HOOK_STEAMFRIENDS(020);
+struct FamSteamClient {
+	static constexpr const char *kExport = "SteamAPI_SteamClient_v";
+	static constexpr const char *kVersion = "SteamClient";
+	static constexpr const char *kSuffixes[] = {
+		"010", "011", "012", "013", "014", "015", "016", "017", "018", "019", "020", "021"};
+	static constexpr size_t kCount = sizeof(kSuffixes) / sizeof(*kSuffixes);
+	static inline void *origs[kCount]{};
+	static void Hook(void *p, const char *v) { HookInterface_ISteamClient(p, v); }
+};
 
-#define HOOK_STEAMAPPS(ver)                                              \
-	typedef void *(*pfn_SteamApps##ver)();                               \
-	static pfn_SteamApps##ver Orig_SteamApps##ver = nullptr;             \
-	static void *Hooked_SteamApps##ver() {                               \
-		void *p = Orig_SteamApps##ver ? Orig_SteamApps##ver() : nullptr; \
-		HookInterface_ISteamApps(p, "STEAMAPPS_INTERFACE_VERSION" #ver); \
-		return p;                                                        \
-	}
+template <class Fam, size_t I>
+static void *VersionedThunk() {
+	void *p = Fam::origs[I] ? reinterpret_cast<void *(*)()>(Fam::origs[I])() : nullptr;
+	char ver[64];
+	_snprintf_s(ver, sizeof(ver), _TRUNCATE, "%s%s", Fam::kVersion, Fam::kSuffixes[I]);
+	Fam::Hook(p, ver);
+	return p;
+}
 
-HOOK_STEAMAPPS(001);
-HOOK_STEAMAPPS(002);
-HOOK_STEAMAPPS(003);
-HOOK_STEAMAPPS(004);
-HOOK_STEAMAPPS(005);
-HOOK_STEAMAPPS(006);
-HOOK_STEAMAPPS(007);
-HOOK_STEAMAPPS(008);
-HOOK_STEAMAPPS(009);
-
-#define HOOK_STEAMCLIENT(ver)                                                \
-	typedef void *(*pfn_SteamClient##ver)();                                 \
-	static pfn_SteamClient##ver Orig_SteamClient##ver = nullptr;             \
-	static void *Hooked_SteamClient##ver() {                                 \
-		void *p = Orig_SteamClient##ver ? Orig_SteamClient##ver() : nullptr; \
-		HookInterface_ISteamClient(p, "SteamClient" #ver);                   \
-		return p;                                                            \
-	}
-
-HOOK_STEAMCLIENT(010);
-HOOK_STEAMCLIENT(011);
-HOOK_STEAMCLIENT(012);
-HOOK_STEAMCLIENT(013);
-HOOK_STEAMCLIENT(014);
-HOOK_STEAMCLIENT(015);
-HOOK_STEAMCLIENT(016);
-HOOK_STEAMCLIENT(017);
-HOOK_STEAMCLIENT(018);
-HOOK_STEAMCLIENT(019);
-HOOK_STEAMCLIENT(020);
-HOOK_STEAMCLIENT(021);
+// The unversioned SteamClient() export returns the same ISteamClient; hook it
+// with the newest layout, same as the old flat hook did.
+static void *Orig_SteamClientFlat = nullptr;
+static void *Hooked_SteamClientFlat() {
+	void *p = Orig_SteamClientFlat ? reinterpret_cast<void *(*)()>(Orig_SteamClientFlat)() : nullptr;
+	HookInterface_ISteamClient(p, "SteamClient021");
+	return p;
+}
 
 static void PreHookSingletons() {
 	HMODULE hSteamApi = GetModuleHandleW(L"steam_api64.dll");
@@ -1775,43 +1756,6 @@ static void SetSteamEnvVars() {
 	LOG("[DSE-DLL] Set SteamPath env = %s (coldloaderhooks=%d)\n", g_steamPath, g_config.coldloaderhooks);
 }
 
-struct VersionedApiHook {
-	const char *suffix;
-	LPVOID hookFn;
-	LPVOID *origFn;
-};
-
-#define VH_ENTRY(type, ver) {#ver, (LPVOID)&Hooked_##type##ver, (LPVOID*)&Orig_##type##ver}
-
-static const VersionedApiHook kSteamUserHooks[] = {
-	VH_ENTRY(SteamUser, 015), VH_ENTRY(SteamUser, 016), VH_ENTRY(SteamUser, 017),
-	VH_ENTRY(SteamUser, 018), VH_ENTRY(SteamUser, 019), VH_ENTRY(SteamUser, 020),
-	VH_ENTRY(SteamUser, 021), VH_ENTRY(SteamUser, 022), VH_ENTRY(SteamUser, 023),
-	VH_ENTRY(SteamUser, 024), VH_ENTRY(SteamUser, 025),
-};
-
-static const VersionedApiHook kSteamFriendsHooks[] = {
-	VH_ENTRY(SteamFriends, 010), VH_ENTRY(SteamFriends, 011), VH_ENTRY(SteamFriends, 012),
-	VH_ENTRY(SteamFriends, 013), VH_ENTRY(SteamFriends, 014), VH_ENTRY(SteamFriends, 015),
-	VH_ENTRY(SteamFriends, 016), VH_ENTRY(SteamFriends, 017), VH_ENTRY(SteamFriends, 018),
-	VH_ENTRY(SteamFriends, 019), VH_ENTRY(SteamFriends, 020),
-};
-
-static const VersionedApiHook kSteamAppsHooks[] = {
-	VH_ENTRY(SteamApps, 001), VH_ENTRY(SteamApps, 002), VH_ENTRY(SteamApps, 003),
-	VH_ENTRY(SteamApps, 004), VH_ENTRY(SteamApps, 005), VH_ENTRY(SteamApps, 006),
-	VH_ENTRY(SteamApps, 007), VH_ENTRY(SteamApps, 008), VH_ENTRY(SteamApps, 009),
-};
-
-static const VersionedApiHook kSteamClientHooks[] = {
-	VH_ENTRY(SteamClient, 010), VH_ENTRY(SteamClient, 011), VH_ENTRY(SteamClient, 012),
-	VH_ENTRY(SteamClient, 013), VH_ENTRY(SteamClient, 014), VH_ENTRY(SteamClient, 015),
-	VH_ENTRY(SteamClient, 016), VH_ENTRY(SteamClient, 017), VH_ENTRY(SteamClient, 018),
-	VH_ENTRY(SteamClient, 019), VH_ENTRY(SteamClient, 020), VH_ENTRY(SteamClient, 021),
-};
-
-#undef VH_ENTRY
-
 // Each steam_api export is a `jmp [rip+0]; <target>` trampoline: into
 // steam_api64_o.dll with steamApiForward, or into its own code otherwise
 // (HookSteamApiInPlace). Swapping the target hooks the export without patching
@@ -1831,15 +1775,21 @@ static bool RetargetForwardedExport(LPVOID p, LPVOID hookFn, LPVOID *origFn) {
 	return true;
 }
 
-template<size_t N>
-static void HookVersionedExports(HMODULE h, const char *prefix, const VersionedApiHook (&hooks)[N]) {
+template <class Fam, size_t... I>
+static void InstallVersionedFamily(HMODULE h, std::index_sequence<I...>) {
+	static LPVOID const thunks[] = {(LPVOID)&VersionedThunk<Fam, I>...};
 	char name[128];
-	for (size_t i = 0; i < N; i++) {
-		_snprintf_s(name, sizeof(name), _TRUNCATE, "%s%s", prefix, hooks[i].suffix);
+	for (size_t i = 0; i < Fam::kCount; i++) {
+		_snprintf_s(name, sizeof(name), _TRUNCATE, "%s%s", Fam::kExport, Fam::kSuffixes[i]);
 		auto p = (LPVOID)GetProcAddress(h, name);
-		if (p && RetargetForwardedExport(p, hooks[i].hookFn, hooks[i].origFn))
+		if (p && RetargetForwardedExport(p, thunks[i], &Fam::origs[i]))
 			LOG("[DSE-DLL]   Hooked %s\n", name);
 	}
+}
+
+template <class Fam>
+static void HookVersionedFamily(HMODULE h) {
+	InstallVersionedFamily<Fam>(h, std::make_index_sequence<Fam::kCount>{});
 }
 
 struct FlatApiHook {
@@ -1914,13 +1864,13 @@ static void HookSteamAPI(HMODULE hSteamApi) {
 			LOG("[DSE-DLL]   %s export not found\n", h.exportName);
 	}
 
-	HookVersionedExports(hSteamApi, "SteamAPI_SteamUser_v", kSteamUserHooks);
-	HookVersionedExports(hSteamApi, "SteamAPI_SteamFriends_v", kSteamFriendsHooks);
-	HookVersionedExports(hSteamApi, "SteamAPI_SteamApps_v", kSteamAppsHooks);
-	HookVersionedExports(hSteamApi, "SteamAPI_SteamClient_v", kSteamClientHooks);
+	HookVersionedFamily<FamSteamUser>(hSteamApi);
+	HookVersionedFamily<FamSteamFriends>(hSteamApi);
+	HookVersionedFamily<FamSteamApps>(hSteamApi);
+	HookVersionedFamily<FamSteamClient>(hSteamApi);
 
 	auto pSteamClient = (LPVOID)GetProcAddress(hSteamApi, "SteamClient");
-	if (pSteamClient && RetargetForwardedExport(pSteamClient, (LPVOID)&Hooked_SteamClient021, (LPVOID *)&Orig_SteamClient021))
+	if (pSteamClient && RetargetForwardedExport(pSteamClient, (LPVOID)&Hooked_SteamClientFlat, &Orig_SteamClientFlat))
 		LOG("[DSE-DLL]   Hooked SteamClient (flat API)\n");
 
 	LOG("[DSE-DLL] Steam API hooks installed.\n");
