@@ -25,3 +25,9 @@ inline bool IsPassthroughExe(LPCWSTR exeName) {
 		   StrStrIW(exeName, L"crashhandler") != nullptr ||
 		   StrStrIW(exeName, L"crashreport") != nullptr;
 }
+
+inline bool IsHostPassthrough() {
+	WCHAR hostPath[MAX_PATH]{};
+	return GetModuleFileNameW(nullptr, hostPath, MAX_PATH) &&
+		   IsPassthroughExe(PathFindFileNameW(hostPath));
+}

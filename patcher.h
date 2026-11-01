@@ -10,7 +10,6 @@ typedef bool(WINAPI *pCreateProcessW_t)(LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES,
 										LPPROCESS_INFORMATION);
 
 extern pCreateProcessW_t OriginalCreateProcessW;
-extern WCHAR patcherPath[MAX_PATH];
 
 bool IsRunningAsAdmin();
 void EnsurePatcherExtracted();

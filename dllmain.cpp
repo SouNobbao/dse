@@ -29,21 +29,20 @@ HMODULE g_hModule = nullptr;
 
 #include "steam_hooks.cpp"
 #include "steam_coldclient_hooks.cpp"
+#include "steam_forward.cpp"
 
 #include "checks.h"
 
 #include "elevator_bin.cpp"
 
-static void RelaunchElevatedAndExit() {
+[[noreturn]] static void RelaunchElevatedAndExit() {
 	LOG("[DSE-DLL] Not admin elevating, spawning dse_elevator.exe ...\n");
 
 	WCHAR exePath[MAX_PATH]{};
 	GetModuleFileNameW(nullptr, exePath, MAX_PATH);
 
-	LPCWSTR cmdArgs = PathGetArgsW(GetCommandLineW());
-
 	WCHAR workDir[MAX_PATH]{};
-	GetModuleFileNameW(nullptr, workDir, MAX_PATH);
+	lstrcpynW(workDir, exePath, MAX_PATH);
 	PathRemoveFileSpecW(workDir);
 
 	WCHAR elevatorPath[MAX_PATH]{};
@@ -59,23 +58,23 @@ static void RelaunchElevatedAndExit() {
 		}
 	}
 
+	// wsprintfW stops at 1024 chars, which cut off long game command lines.
+	LPCWSTR cmdArgs = PathGetArgsW(GetCommandLineW());
 	WCHAR cmdLine[8192]{};
-	if (cmdArgs && cmdArgs[0] != L'\0') {
-		wsprintfW(cmdLine, L"\"%s\" \"%s\" \"%s\"", elevatorPath, exePath, cmdArgs);
-	} else {
-		wsprintfW(cmdLine, L"\"%s\" \"%s\"", elevatorPath, exePath);
-	}
+	if (cmdArgs && cmdArgs[0])
+		_snwprintf_s(cmdLine, ARRAYSIZE(cmdLine), _TRUNCATE, L"\"%ls\" \"%ls\" \"%ls\"", elevatorPath, exePath, cmdArgs);
+	else
+		_snwprintf_s(cmdLine, ARRAYSIZE(cmdLine), _TRUNCATE, L"\"%ls\" \"%ls\"", elevatorPath, exePath);
 
 	STARTUPINFOW si = {sizeof(si)};
 	PROCESS_INFORMATION pi{};
-
 	if (CreateProcessW(elevatorPath, cmdLine, nullptr, nullptr, FALSE, 0, nullptr, workDir, &si, &pi)) {
 		LOG("[DSE-DLL] Elevator launched, waiting for UAC...\n");
 		WaitForSingleObject(pi.hProcess, INFINITE);
 		CloseHandle(pi.hThread);
 		CloseHandle(pi.hProcess);
 	} else {
-		LOG("[DSE-DLL] Failed to launch elevator: %d\n", GetLastError());
+		LOG("[DSE-DLL] Failed to launch elevator: %lu\n", GetLastError());
 	}
 
 	DeleteFileW(elevatorPath);
@@ -85,17 +84,46 @@ static void RelaunchElevatedAndExit() {
 }
 
 pCreateProcessW_t OriginalCreateProcessW = nullptr;
+static decltype(&CreateWindowExW) OriginalCreateWindowExW = nullptr;
 
-typedef HWND(WINAPI *pCreateWindowExW)(DWORD, LPCWSTR, LPCWSTR, DWORD, int, int,
-									   int, int, HWND, HMENU, HINSTANCE,
-									   LPVOID);
-static pCreateWindowExW OriginalCreateWindowExW = nullptr;
+static void GetLaunchedExePath(LPCWSTR app, LPCWSTR cmdLine, WCHAR (&out)[MAX_PATH]) {
+	if (app && app[0]) {
+		lstrcpynW(out, app, MAX_PATH);
+		return;
+	}
+	if (!cmdLine || !cmdLine[0])
+		return;
+	int argc = 0;
+	LPWSTR *argv = CommandLineToArgvW(cmdLine, &argc);
+	if (!argv)
+		return;
+	if (argc > 0)
+		lstrcpynW(out, argv[0], MAX_PATH);
+	LocalFree(argv);
+}
 
-typedef BOOL(WINAPI *pCreateProcessWithTokenW)(HANDLE, DWORD, LPCWSTR, LPWSTR,
-											   DWORD, LPVOID, LPCWSTR,
-											   LPSTARTUPINFOW,
-											   LPPROCESS_INFORMATION);
-static pCreateProcessWithTokenW OriginalCreateProcessWithTokenW = nullptr;
+static bool ShouldPassThrough(LPCWSTR exePath, LPCWSTR curDir) {
+	static WCHAR s_gameDir[MAX_PATH]{};
+	if (!s_gameDir[0] && GetModuleFileNameW(nullptr, s_gameDir, MAX_PATH)) {
+		PathRemoveFileSpecW(s_gameDir);
+		PathAddBackslashW(s_gameDir);
+	}
+
+	WCHAR resolved[MAX_PATH]{};
+	if (!PathIsRelativeW(exePath)) {
+		lstrcpynW(resolved, exePath, MAX_PATH);
+	} else {
+		WCHAR cwd[MAX_PATH]{};
+		LPCWSTR base = (curDir && curDir[0]) ? curDir : (GetCurrentDirectoryW(MAX_PATH, cwd) ? cwd : nullptr);
+		if (base)
+			PathCombineW(resolved, base, exePath);
+	}
+
+	LPCWSTR checkPath = resolved[0] ? resolved : exePath;
+	if (s_gameDir[0] && StrStrIW(checkPath, s_gameDir) != checkPath)
+		return true;
+	return IsPassthroughExe(PathFindFileNameW(exePath));
+}
 
 BOOL WINAPI HookedCreateProcessW(
 	LPCWSTR lpApplicationName, LPWSTR lpCommandLine,
@@ -111,65 +139,17 @@ BOOL WINAPI HookedCreateProcessW(
 			lpCurrentDirectory, lpStartupInfo, lpProcessInformation);
 	};
 
-	static WCHAR s_gameDir[MAX_PATH]{};
-	if (GetModuleFileNameW(nullptr, s_gameDir, MAX_PATH)) {
-		PathRemoveFileSpecW(s_gameDir);
-		PathAddBackslashW(s_gameDir);
-	}
-
-	auto cmdLineToExePath = [](LPCWSTR cmdLine, WCHAR *out, int outLen) {
-		out[0] = L'\0';
-		if (!cmdLine || !cmdLine[0])
-			return;
-		int argc = 0;
-		LPWSTR *argv = CommandLineToArgvW(cmdLine, &argc);
-		if (argv) {
-			if (argc > 0)
-				wcsncpy_s(out, outLen, argv[0], _TRUNCATE);
-			LocalFree(argv);
-		}
-	};
-
 	WCHAR exePath[MAX_PATH]{};
-	if (lpApplicationName && lpApplicationName[0])
-		lstrcpynW(exePath, lpApplicationName, MAX_PATH);
-	else if (lpCommandLine)
-		cmdLineToExePath(lpCommandLine, exePath, MAX_PATH);
-
-	if (exePath[0]) {
-		WCHAR resolvedPath[MAX_PATH]{};
-		if (PathIsRelativeW(exePath)) {
-			WCHAR cwd[MAX_PATH]{};
-			const WCHAR *base =
-				(lpCurrentDirectory && lpCurrentDirectory[0]) ? lpCurrentDirectory
-				: GetCurrentDirectoryW(MAX_PATH, cwd)		  ? cwd
-															  : nullptr;
-			if (base)
-				PathCombineW(resolvedPath, base, exePath);
-		} else {
-			lstrcpynW(resolvedPath, exePath, MAX_PATH);
-		}
-
-		const WCHAR *checkPath = resolvedPath[0] ? resolvedPath : exePath;
-
-		if (s_gameDir[0] && StrStrIW(checkPath, s_gameDir) != checkPath)
-			return passthrough();
-
-		LPCWSTR exeName = PathFindFileNameW(exePath);
-		if (IsPassthroughExe(exeName))
-			return passthrough();
-	}
+	GetLaunchedExePath(lpApplicationName, lpCommandLine, exePath);
+	if (exePath[0] && ShouldPassThrough(exePath, lpCurrentDirectory))
+		return passthrough();
 
 	LOG("[DSE-DLL] CreateProcessW intercepted: %ls\n",
 		lpCommandLine ? lpCommandLine : L"(null)");
 
-	if (g_targetExe[0]) {
-		LPCWSTR exeName = exePath[0] ? PathFindFileNameW(exePath) : nullptr;
-		if (!exeName || !StrStrIW(exeName, g_targetExe)) {
-			LOG("[DSE-DLL] Exe does not match target '%ls', passing through\n",
-				g_targetExe);
-			return passthrough();
-		}
+	if (g_targetExe[0] && (!exePath[0] || !StrStrIW(PathFindFileNameW(exePath), g_targetExe))) {
+		LOG("[DSE-DLL] Exe does not match target '%ls', passing through\n", g_targetExe);
+		return passthrough();
 	}
 
 	if (g_isLauncher) {
@@ -244,19 +224,31 @@ static void InitializeHooks() {
 	}
 
 	MH_CreateHookApi(L"kernel32.dll", "CreateProcessW",
-					 (LPVOID)&HookedCreateProcessW,
-					 (LPVOID *)&OriginalCreateProcessW);
-
+					 (LPVOID)&HookedCreateProcessW, (LPVOID *)&OriginalCreateProcessW);
 	MH_CreateHookApi(L"user32.dll", "CreateWindowExW",
-					 (LPVOID)&HookedCreateWindowExW,
-					 (LPVOID *)&OriginalCreateWindowExW);
-
+					 (LPVOID)&HookedCreateWindowExW, (LPVOID *)&OriginalCreateWindowExW);
 	MH_CreateHookApi(L"advapi32.dll", "CreateProcessWithTokenW",
-					 (LPVOID)&HookedCreateProcessWithTokenW,
-					 (LPVOID *)&OriginalCreateProcessWithTokenW);
+					 (LPVOID)&HookedCreateProcessWithTokenW, nullptr);
 
 	MH_EnableHook(MH_ALL_HOOKS);
 	LOG("[DSE-DLL] Hooks installed\n");
+}
+
+static void PrepareDse() {
+	WaitForWatchdogToExit();
+	if (IsDseEnabledNtdll()) {
+		LOG("[DSE-DLL] Running as ADMIN, disabling DSE...\n");
+		DisableDse();
+		SetDseToggled();
+		g_wasToggled = true;
+	} else if (CheckAndSetDseToggled()) {
+		LOG("[DSE-DLL] DSE off (parent disabled it), proceeding normally\n");
+		g_wasToggled = true;
+	} else {
+		LOG("[DSE-DLL] DSE off from start (testsigning etc.)\n");
+		SetDseOffFromStart();
+		g_wasOffFromStart = true;
+	}
 }
 
 static void OnProcessAttach(HMODULE hModule) {
@@ -268,57 +260,34 @@ static void OnProcessAttach(HMODULE hModule) {
 
 	HideModule();
 
-	WCHAR hostPath[MAX_PATH]{};
-	if (GetModuleFileNameW(nullptr, hostPath, MAX_PATH) && IsPassthroughExe(PathFindFileNameW(hostPath))) {
+	if (IsHostPassthrough())
 		return;
-	}
 
 	SetupLogConsole(g_hModule);
 
 	LOG("[DSE-DLL] Attached to PID %lu\n", GetCurrentProcessId());
-	LOG("[DSE-DLL] Config: toggleDse=%d steamHooks=%d "
-		"logging=%d\n",
-		g_config.toggleDse, g_config.steamHooks,
-		g_config.logging);
+	LOG("[DSE-DLL] Config: toggleDse=%d steamHooks=%d logging=%d\n",
+		g_config.toggleDse, g_config.steamHooks, g_config.logging);
 
-	if (g_config.toggleDse && !IsRunningAsAdmin()) {
+	if (g_config.toggleDse && !IsRunningAsAdmin())
 		RelaunchElevatedAndExit();
-	} else {
-		g_isLauncher = DetectLauncherTarget(g_targetExe, ARRAYSIZE(g_targetExe));
-		if (g_config.toggleDse) {
-			ManageProblematicServices();
-			ManageProblematicTasks();
-		}
 
-		CheckAndSetAfterburnerEvent();
-
-		if (g_config.toggleDse && IsAfterburnerRunning()) {
-			SetAfterburnerRunningState(true);
-		}
-
-		SystemChecks();
-
-		if (g_config.toggleDse) {
-			WaitForWatchdogToExit();
-			if (!IsDseEnabledNtdll()) {
-				if (CheckAndSetDseToggled()) {
-					LOG("[DSE-DLL] DSE off (parent disabled it), proceeding normally\n");
-					g_wasToggled = true;
-				} else {
-					LOG("[DSE-DLL] DSE off from start (testsigning etc.)\n");
-					SetDseOffFromStart();
-					g_wasOffFromStart = true;
-				}
-			} else {
-				LOG("[DSE-DLL] Running as ADMIN, disabling DSE...\n");
-				DisableDse();
-				SetDseToggled();
-				g_wasToggled = true;
-			}
-		} else {
-			LOG("[DSE-DLL] DSE toggling disabled by config\n");
-		}
+	g_isLauncher = DetectLauncherTarget(g_targetExe, ARRAYSIZE(g_targetExe));
+	if (g_config.toggleDse) {
+		ManageProblematicServices();
+		ManageProblematicTasks();
 	}
+
+	CheckAndSetAfterburnerEvent();
+	if (g_config.toggleDse && IsAfterburnerRunning())
+		SetAfterburnerRunningState(true);
+
+	SystemChecks();
+
+	if (g_config.toggleDse)
+		PrepareDse();
+	else
+		LOG("[DSE-DLL] DSE toggling disabled by config\n");
 
 	InitializeHooks();
 	if (g_config.steamHooks) {
@@ -328,21 +297,20 @@ static void OnProcessAttach(HMODULE hModule) {
 	} else {
 		LOG("[DSE-DLL] Steam hooks disabled by config\n");
 	}
+	if (g_config.steamApiForward)
+		InitSteamApiForward();
 
-	if (g_isLauncher) {
+	if (g_isLauncher)
 		LOG("[DSE-DLL] Launcher detected, skipping watchdog\n");
-	} else if (g_config.toggleDse) {
+	else if (g_config.toggleDse)
 		SpawnWatchdog(g_wasOffFromStart, g_wasToggled);
-	} else {
+	else
 		LOG("[DSE-DLL] DSE toggling disabled, skipping watchdog\n");
-	}
 }
 
 static void OnProcessDetach() {
-	WCHAR hostPath[MAX_PATH]{};
-	if (GetModuleFileNameW(nullptr, hostPath, MAX_PATH) && IsPassthroughExe(PathFindFileNameW(hostPath))) {
+	if (IsHostPassthrough())
 		return;
-	}
 
 	LOG("[DSE-DLL] Detaching...\n");
 	CloseDseEvents();
@@ -350,56 +318,21 @@ static void OnProcessDetach() {
 	bool otherGameRunning = IsOtherGameRunning();
 
 	if (g_config.toggleDse && !g_wasOffFromStart) {
-		if (IsDseEnabledNtdll()) {
+		if (IsDseEnabledNtdll())
 			LOG("[DSE-DLL] Detaching > DSE already enabled, skipping\n");
-		} else {
-			if (otherGameRunning) {
-				LOG("[DSE-DLL] Detaching > another game is running, skipping restore\n");
-			} else {
-				LOG("[DSE-DLL] Detaching... restoring DSE...\n");
-				EnableDse();
-			}
+		else if (otherGameRunning)
+			LOG("[DSE-DLL] Detaching > another game is running, skipping restore\n");
+		else {
+			LOG("[DSE-DLL] Detaching... restoring DSE...\n");
+			EnableDse();
 		}
 	}
 
-	if (g_config.toggleDse && !otherGameRunning) {
+	if (g_config.toggleDse && !otherGameRunning)
 		RestoreProblematicServices();
-	}
 
-	if (g_config.steam_path) {
-		string_deallocate(g_config.steam_path);
-		g_config.steam_path = nullptr;
-	}
+	FreeDseConfig();
 
-	if (g_config.problematicServices) {
-		size_t svcCount = vector_size(g_config.problematicServices);
-		for (size_t i = 0; i < svcCount; ++i) {
-			ProblematicService **pps = (ProblematicService **)vector_at(g_config.problematicServices, i);
-			ProblematicService *ps = pps ? *pps : nullptr;
-			if (ps) {
-				if (ps->name) {
-					string_deallocate(ps->name);
-					ps->name = nullptr;
-				}
-				delete ps;
-			}
-		}
-		vector_deallocate(g_config.problematicServices);
-		g_config.problematicServices = nullptr;
-	}
-
-	if (g_config.problematicTasks) {
-		size_t tCount = vector_size(g_config.problematicTasks);
-		for (size_t i = 0; i < tCount; ++i) {
-			String **pstr = (String **)vector_at(g_config.problematicTasks, i);
-			String *s = pstr ? *pstr : nullptr;
-			if (s) {
-				string_deallocate(s);
-			}
-		}
-		vector_deallocate(g_config.problematicTasks);
-		g_config.problematicTasks = nullptr;
-	}
 	LOG("[DSE-DLL] Uninitializing MinHook...\n");
 	MH_Uninitialize();
 	LOG("[DSE-DLL] Deleting patcher...\n");

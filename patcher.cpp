@@ -18,7 +18,7 @@
 
 #pragma comment(lib, "shlwapi.lib")
 
-WCHAR patcherPath[MAX_PATH]{};
+static WCHAR patcherPath[MAX_PATH]{};
 
 static BOOL WINAPI CallCreateProcessW(
 	LPCWSTR app, LPWSTR cmd, LPSECURITY_ATTRIBUTES pa, LPSECURITY_ATTRIBUTES ta,

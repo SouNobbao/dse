@@ -1,7 +1,6 @@
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN
-#include <string>
 #include "c_std/vector/vector.h"
 #include "c_std/string/std_string.h"
 #include <windows.h>
@@ -21,6 +20,7 @@ struct DseConfig {
 	bool steamHooks;
 	bool reloaded;
 	bool coldloaderhooks;
+	bool steamApiForward;
 	String *steam_path;
 
 	bool logging;
@@ -31,3 +31,4 @@ struct DseConfig {
 extern DseConfig g_config;
 
 void LoadDseConfig(HMODULE hModule);
+void FreeDseConfig();

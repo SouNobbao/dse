@@ -7,10 +7,32 @@
 #include "log.h"
 #include "patcher.h"
 
+#include <cstdio>
 #include <shlwapi.h>
 
+// Args: inherited game process handle, wasOffFromStart, wasToggled.
 static constexpr LPCWSTR kWatchdogCommandTemplate =
-	L"rundll32.exe \"%s\",DseWatchdog %lu %d %d %s";
+	L"rundll32.exe \"%s\",DseWatchdog %lu %d %d";
+
+static void RestoreDseIfNeeded(bool wasOffFromStart) {
+	if (wasOffFromStart) {
+		LOG("[WATCHDOG] DSE was off from start, skipping restore.\n");
+		return;
+	}
+	CloseGameEvents();
+	if (IsOtherGameRunning()) {
+		LOG("[WATCHDOG] Another game is still running, skipping restore.\n");
+		return;
+	}
+	if (IsDseEnabled(false)) {
+		LOG("[WATCHDOG] DSE already enabled, skipping.\n");
+	} else {
+		EnableDse();
+		LOG("[WATCHDOG] Restoration complete.\n");
+	}
+	if (g_config.toggleDse)
+		RestoreProblematicServices();
+}
 
 extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
 														   HINSTANCE hinst,
@@ -25,98 +47,35 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
 	g_loggingEnabled = g_config.logging;
 	LOG("[WATCHDOG] Started with args: %s\n", lpszCmdLine);
 
-	char *p = lpszCmdLine;
-	char *end = nullptr;
-
-	long pid = strtol(p, &end, 10);
-	if (end == p || *end != ' ') {
-		LOG("[WATCHDOG] Bad PID\n");
+	unsigned long gameHandle = 0;
+	int wasOffFromStart = 0, wasToggled = 0;
+	if (sscanf_s(lpszCmdLine, "%lu %d %d", &gameHandle, &wasOffFromStart, &wasToggled) != 3) {
+		LOG("[WATCHDOG] Bad args\n");
 		return;
 	}
-	p = end + 1;
+	// Kernel handles are guaranteed to fit in 32 bits, so the round trip is lossless.
+	HANDLE hGame = (HANDLE)(ULONG_PTR)gameHandle;
 
-	long wasOffFromStart = strtol(p, &end, 10);
-	if (end == p || *end != ' ') {
-		LOG("[WATCHDOG] Bad wasOffFromStart\n");
-		return;
-	}
-	p = end + 1;
-
-	long wasToggled = strtol(p, &end, 10);
-	if (end == p || *end != ' ') {
-		LOG("[WATCHDOG] Bad wasToggled\n");
-		return;
-	}
-	p = end + 1;
-
-	char *drvStart = p;
-	while (*p && *p != '\r' && *p != '\n')
-		p++;
-	char drvA[MAX_PATH] = {0};
-	int drvLen = (int)(p - drvStart);
-	if (drvLen <= 0 || drvLen >= MAX_PATH) {
-		LOG("[WATCHDOG] Bad drvPath\n");
-		return;
-	}
-	memcpy(drvA, drvStart, drvLen);
-
-	WCHAR drvPath[MAX_PATH] = {0};
-	MultiByteToWideChar(CP_ACP, 0, drvA, -1, drvPath, MAX_PATH);
-
-	LOG("[WATCHDOG] PID=%ld, wasOffFromStart=%ld, wasToggled=%ld\n", pid, wasOffFromStart, wasToggled);
-	LOG("[WATCHDOG] drvloader: %s\n", drvA);
-
-	// Grab handles to global events so they stay alive even if the game crashes
-	if (wasToggled) {
+	if (wasToggled)
 		CheckAndSetDseToggled();
-	}
-	// If dse was off open event up to avoid turning on dse
-	if (wasOffFromStart) {
+	if (wasOffFromStart)
 		CheckAndSetDseOffFromStart();
-	}
 	CheckAndSetAfterburnerEvent();
 
 	HANDLE hWatchdogMutex = CreateMutexW(nullptr, TRUE, L"Local\\DseDll_WatchdogAlive");
 
-	HANDLE hProc = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)pid);
-	if (!hProc) {
-		LOG("[WATCHDOG] OpenProcess failed! err: %lu\n", GetLastError());
-		if (hWatchdogMutex)
-			CloseHandle(hWatchdogMutex);
-		return;
-	}
-
 	LOG("[WATCHDOG] Waiting for game to exit...\n");
-	WaitForSingleObject(hProc, INFINITE);
-	CloseHandle(hProc);
+	// On failure, restore anyway: leaving DSE off is worse than restoring early.
+	if (WaitForSingleObject(hGame, INFINITE) == WAIT_FAILED)
+		LOG("[WATCHDOG] Wait failed, err: %lu, restoring now\n", GetLastError());
+	else
+		LOG("[WATCHDOG] Game exited!\n");
+	CloseHandle(hGame);
 
-	LOG("[WATCHDOG] Game exited!\n");
-
-	if (wasOffFromStart) {
-		LOG("[WATCHDOG] DSE was off from start, skipping restore.\n");
-	} else {
-		CloseGameEvents();
-
-		if (IsOtherGameRunning()) {
-			LOG("[WATCHDOG] Another game is still running, skipping restore.\n");
-		} else {
-			lstrcpynW(drvPath, drvPath, MAX_PATH);
-
-			if (IsDseEnabled(false)) {
-				LOG("[WATCHDOG] DSE already enabled, skipping.\n");
-			} else {
-				EnableDse();
-				LOG("[WATCHDOG] Restoration complete.\n");
-			}
-
-			if (g_config.toggleDse) {
-				RestoreProblematicServices();
-			}
-		}
-	}
+	RestoreDseIfNeeded(wasOffFromStart != 0);
 
 	CloseDseEvents();
-	DeleteFileW(drvPath);
+	DeletePatcherFile();
 	if (hWatchdogMutex)
 		CloseHandle(hWatchdogMutex);
 	LOG("[WATCHDOG] Exiting.\n");
@@ -124,30 +83,54 @@ extern "C" __declspec(dllexport) void CALLBACK DseWatchdog(HWND hwnd,
 }
 
 void SpawnWatchdog(bool wasOffFromStart, bool wasToggled) {
-	WCHAR hostPath[MAX_PATH]{};
-	if (GetModuleFileNameW(nullptr, hostPath, MAX_PATH) && IsPassthroughExe(PathFindFileNameW(hostPath))) {
+	if (IsHostPassthrough())
 		return;
-	}
-
-	EnsurePatcherExtracted();
 
 	WCHAR dllPath[MAX_PATH]{};
 	if (!GetModuleFileNameW(g_hModule, dllPath, MAX_PATH))
 		return;
 
-	WCHAR cmdLine[MAX_PATH * 4]{};
-	wsprintfW(cmdLine, kWatchdogCommandTemplate, dllPath, GetCurrentProcessId(),
-			  wasOffFromStart ? 1 : 0, wasToggled ? 1 : 0, patcherPath);
+	// The watchdog waits on this handle instead of a PID, so it can't miss a fast
+	// exit or end up waiting on a reused PID.
+	HANDLE hSelf = nullptr;
+	if (!DuplicateHandle(GetCurrentProcess(), GetCurrentProcess(), GetCurrentProcess(),
+						 &hSelf, SYNCHRONIZE, TRUE, 0)) {
+		LOG("[DSE-DLL] Failed to duplicate game handle, err: %lu\n", GetLastError());
+		return;
+	}
 
+	WCHAR cmdLine[MAX_PATH * 4]{};
+	wsprintfW(cmdLine, kWatchdogCommandTemplate, dllPath, (DWORD)(ULONG_PTR)hSelf,
+			  wasOffFromStart ? 1 : 0, wasToggled ? 1 : 0);
 	LOG("[DSE-DLL] Spawning watchdog: %ls\n", cmdLine);
 
-	STARTUPINFOW si = {sizeof(si)};
+	// Inherit only hSelf; the game's other inheritable handles (e.g. launcher
+	// stdout pipes) would otherwise stay open for the watchdog's lifetime.
+	SIZE_T attrSize = 0;
+	InitializeProcThreadAttributeList(nullptr, 1, 0, &attrSize);
+	auto attrs = (LPPROC_THREAD_ATTRIBUTE_LIST)HeapAlloc(GetProcessHeap(), 0, attrSize);
+	bool attrsReady = attrs && InitializeProcThreadAttributeList(attrs, 1, 0, &attrSize);
+
+	STARTUPINFOEXW si{};
+	si.StartupInfo.cb = sizeof(si);
+	si.lpAttributeList = attrs;
 	PROCESS_INFORMATION pi{};
-	if (CreateProcessW(nullptr, cmdLine, nullptr, nullptr, FALSE,
-					   CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+	bool ok = attrsReady &&
+			  UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+										&hSelf, sizeof(hSelf), nullptr, nullptr) &&
+			  CreateProcessW(nullptr, cmdLine, nullptr, nullptr, TRUE,
+							 CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT,
+							 nullptr, nullptr, &si.StartupInfo, &pi);
+	if (ok) {
 		CloseHandle(pi.hThread);
 		CloseHandle(pi.hProcess);
 	} else {
 		LOG("[DSE-DLL] Failed to spawn watchdog, err: %lu\n", GetLastError());
 	}
+
+	if (attrsReady)
+		DeleteProcThreadAttributeList(attrs);
+	if (attrs)
+		HeapFree(GetProcessHeap(), 0, attrs);
+	CloseHandle(hSelf);
 }

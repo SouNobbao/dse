@@ -190,6 +190,11 @@ static int HookAllExports(HMODULE hSource, HMODULE hTarget) {
 	WORD *ords = (WORD *)((BYTE *)hSource + expDir->AddressOfNameOrdinals);
 	DWORD *funcs = (DWORD *)((BYTE *)hSource + expDir->AddressOfFunctions);
 
+	WCHAR targetPath[MAX_PATH]{};
+	GetModuleFileNameW(hTarget, targetPath, MAX_PATH);
+	char targetName[MAX_PATH]{};
+	WideCharToMultiByte(CP_ACP, 0, PathFindFileNameW(targetPath), -1, targetName, MAX_PATH, nullptr, nullptr);
+
 	int forwarded = 0, skipped = 0, failed = 0;
 
 	const size_t trampolineBytes = expDir->NumberOfNames * kTrampolineSize;
@@ -223,8 +228,8 @@ static int HookAllExports(HMODULE hSource, HMODULE hTarget) {
 		// the game resolves every export straight to real steamclient64.
 		void *target = (void *)GetProcAddress(hTarget, name);
 		if (!target) {
-			LOG("[DSE-DLL] %s stays on the emulator: not exported by the real steamclient64\n",
-				name);
+			LOG("[DSE-DLL] %s stays on the emulator: not exported by the real %s\n",
+				name, targetName);
 			++skipped;
 			continue;
 		}

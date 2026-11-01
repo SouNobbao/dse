@@ -36,13 +36,13 @@ bool IsAfterburnerRunning() {
 	GetAfterburnerLocation();
 
 	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-	if (snapshot == INVALID_HANDLE_VALUE) {
-		return -1;
-	}
+	if (snapshot == INVALID_HANDLE_VALUE)
+		return false;
 
 	PROCESSENTRY32W entry = {};
 	entry.dwSize = sizeof(entry);
 
+	bool found = false;
 	if (Process32FirstW(snapshot, &entry)) {
 		do {
 			if (lstrcmpiW(entry.szExeFile, L"MSIAfterburner.exe") == 0) {
@@ -53,21 +53,21 @@ bool IsAfterburnerRunning() {
 					LOG("[DSE-DLL] Found Afterburner, PID=%lu\n", entry.th32ProcessID);
 					if (g_AfterburnerLoc[0] == L'\0') {
 						DWORD size = MAX_PATH;
-						if (QueryFullProcessImageNameW(g_AfterburnerProcess, 0, g_AfterburnerLoc, &size)) {
+						if (QueryFullProcessImageNameW(g_AfterburnerProcess, 0, g_AfterburnerLoc, &size))
 							LOG("[DSE-DLL] Resolved Afterburner path from process: %ls\n", g_AfterburnerLoc);
-						}
 					}
 				} else {
 					LOG("[DSE-DLL] Found Afterburner, PID=%lu, but failed to open process.\n",
 						entry.th32ProcessID);
 				}
-				return g_AfterburnerProcess != NULL;
+				found = g_AfterburnerProcess != NULL;
+				break;
 			}
 		} while (Process32NextW(snapshot, &entry));
 	}
 
 	CloseHandle(snapshot);
-	return FALSE;
+	return found;
 }
 
 bool WasAfterburnerRunning() { return WasAfterburnerEventSet(); }

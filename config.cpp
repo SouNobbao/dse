@@ -11,7 +11,7 @@
 #pragma comment(lib, "shlwapi.lib")
 
 // default config order
-DseConfig g_config = {true, false, false, false, nullptr, false, nullptr, nullptr};
+DseConfig g_config = {true, false, false, false, false, nullptr, false, nullptr, nullptr};
 
 static bool ReadIniBool(LPCWSTR section, LPCWSTR key, bool defaultVal,
 						LPCWSTR iniPath) {
@@ -69,6 +69,7 @@ void LoadDseConfig(HMODULE hModule) {
 						   L"; Enable/disable Steam API hooks\nsteamHooks=false\n"
 						   L"; Enable coldloader support (for games that need it)\ncoldloaderhooks=false\n"
 						   L"; Path to original Steam client for coldloaderhooks\nsteam_path=\n"
+						   L"; Forward emulator steam_api64.dll exports to steam_api64_o.dll\nsteamApiForward=false\n"
 						   L"; Enable/disable logging output\nlogging=false\n"
 						   L"; Disable some Steam API hooks when using Reloaded-II\n"
 						   L"reloaded=false\n\n"
@@ -85,6 +86,7 @@ void LoadDseConfig(HMODULE hModule) {
 	g_config.toggleDse = ReadIniBool(L"dse", L"toggleDse", true, iniPath);
 	g_config.steamHooks = ReadIniBool(L"dse", L"steamHooks", false, iniPath);
 	g_config.coldloaderhooks = ReadIniBool(L"dse", L"coldloaderhooks", false, iniPath);
+	g_config.steamApiForward = ReadIniBool(L"dse", L"steamApiForward", false, iniPath);
 
 	WCHAR pathBuf[MAX_PATH]{};
 	GetPrivateProfileStringW(L"dse", L"steam_path", L"", pathBuf, ARRAYSIZE(pathBuf), iniPath);
@@ -154,4 +156,26 @@ void LoadDseConfig(HMODULE hModule) {
 	if (!g_config.problematicTasks)
 		g_config.problematicTasks = vector_create(sizeof(String *));
 	ReadIniStringList(L"dse", L"problematic_tasks", iniPath, g_config.problematicTasks);
+}
+
+void FreeDseConfig() {
+	string_deallocate(g_config.steam_path);
+	g_config.steam_path = nullptr;
+
+	if (g_config.problematicServices) {
+		for (size_t i = 0; i < vector_size(g_config.problematicServices); ++i) {
+			ProblematicService *ps = *(ProblematicService **)vector_at(g_config.problematicServices, i);
+			string_deallocate(ps->name);
+			delete ps;
+		}
+		vector_deallocate(g_config.problematicServices);
+		g_config.problematicServices = nullptr;
+	}
+
+	if (g_config.problematicTasks) {
+		for (size_t i = 0; i < vector_size(g_config.problematicTasks); ++i)
+			string_deallocate(*(String **)vector_at(g_config.problematicTasks, i));
+		vector_deallocate(g_config.problematicTasks);
+		g_config.problematicTasks = nullptr;
+	}
 }

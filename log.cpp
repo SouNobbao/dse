@@ -4,7 +4,6 @@
 #include <cstdio>
 #include <cstring>
 #include <shlwapi.h>
-#include "c_std/string/std_string.h"
 
 #pragma comment(lib, "shlwapi.lib")
 
@@ -38,9 +37,7 @@ static void AppendLogLine(const char *line) {
 	if (hFile == INVALID_HANDLE_VALUE)
 		return;
 
-	String *tmpStr = string_create(line);
-	DWORD bytes = static_cast<DWORD>(string_length(tmpStr));
-	string_deallocate(tmpStr);
+	DWORD bytes = static_cast<DWORD>(strlen(line));
 	DWORD written = 0;
 	WriteFile(hFile, line, bytes, &written, nullptr);
 	CloseHandle(hFile);
@@ -59,15 +56,8 @@ void Log(const char *fmt, ...) {
 	static bool s_hasLast = false;
 	static char s_lastLine[sizeof(buffer)]{};
 
-	if (s_hasLast) {
-		String *a = string_create(buffer);
-		String *b = string_create(s_lastLine);
-		bool equal = (string_compare(a, b) == 0);
-		string_deallocate(a);
-		string_deallocate(b);
-		if (equal)
-			return;
-	}
+	if (s_hasLast && strcmp(buffer, s_lastLine) == 0)
+		return;
 	s_hasLast = true;
 	strcpy_s(s_lastLine, sizeof(s_lastLine), buffer);
 
