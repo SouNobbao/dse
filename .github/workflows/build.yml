@@ -351,7 +351,7 @@ jobs:
 
         # If linux/minGW artifacts provided an elevator/kvc/drvloader, copy them into bins
         if (Test-Path '.\linux_artifacts\bins\dse_elevator.exe') { copy .\linux_artifacts\bins\dse_elevator.exe .\bins\dse_elevator.exe }
-        if (Test-Path '.\linux_artifacts\bins\drvloader.exe') { copy .\linux_artifacts\bins\drvloader.exe .\bins\drvloader.exe }
+
         if (Test-Path '.\linux_artifacts\bins\kvc.exe') { copy .\linux_artifacts\bins\kvc.exe .\bins\kvc.exe }
 
         # Build elevator.exe via cl only if not provided by linux artifacts
@@ -363,7 +363,7 @@ jobs:
         $xxd = Get-Command xxd -ErrorAction SilentlyContinue
         function Get-Hex([string]$path){ if ($xxd) { $i = & xxd -i $path | Out-String; $m = [regex]::Match($i,'\{([\s\S]*)\}\s*;'); if ($m.Success){ return $m.Groups[1].Value } else { throw 'xxd parse failed' } } else { $b = [System.IO.File]::ReadAllBytes($path); return ($b | ForEach-Object { '0x' + $_.ToString('x2') }) -join ', ' } }
         if (Test-Path '.\bins\dse_elevator.exe') { $el = Get-Hex '.\bins\dse_elevator.exe'; (Get-Content '.\elevator_bin.cpp' -Raw) -replace '%placeholder_el_bin%',$el | Set-Content '.\elevator_bin.cpp' -Encoding ASCII }
-        if (Test-Path '.\bins\drvloader.exe') { $drv = Get-Hex '.\bins\drvloader.exe'; (Get-Content '.\drvloader_bin.cpp' -Raw) -replace '%placeholder_drv_bin%',$drv | Set-Content '.\drvloader_bin.cpp' -Encoding ASCII }
+
         if (Test-Path '.\bins\kvc.exe') { $kvc = Get-Hex '.\bins\kvc.exe'; (Get-Content '.\kvc_bin.cpp' -Raw) -replace '%placeholder_kvc_bin%',$kvc | Set-Content '.\kvc_bin.cpp' -Encoding ASCII }
 
         # Configure and build with NMake
@@ -376,8 +376,7 @@ jobs:
         copy build-msvc\dse_kvc.dll release\dse_kvc.dll
         copy bins\dse_elevator.exe release\dse_elevator.exe
 
-        # Also include linux-provided drvloader and kvc inside the MSVC package if present
-        if (Test-Path '.\bins\drvloader.exe') { copy .\bins\drvloader.exe release\drvloader.exe }
+        # Also include linux-provided kvc inside the MSVC package if present
         if (Test-Path '.\bins\kvc.exe') { copy .\bins\kvc.exe release\kvc.exe }
 
         # Generate a self-signed PFX and sign DLLs before packaging

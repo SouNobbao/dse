@@ -30,7 +30,15 @@ set(SOURCES
     c_std/string/std_string.c
 )
 
-add_library(dse SHARED ${SOURCES})
+# Integrated drvloader sources (only compiled into dse target, not dse_kvc)
+set(DRVLOADER_SOURCES
+    drvloader/DrvCore.cpp
+    drvloader/ConfigManager.cpp
+    drvloader/SymbolDownloader.cpp
+    drvloader/ResourceInstaller.cpp
+)
+
+add_library(dse SHARED ${SOURCES} ${DRVLOADER_SOURCES})
 add_library(dse_kvc SHARED ${SOURCES})
 
 # Ensure C sources are compiled as C when using MSVC
@@ -111,3 +119,7 @@ foreach(TARGET dse dse_kvc)
 endforeach()
 
 target_compile_definitions(dse PRIVATE _STABLE)
+
+# dse (STABLE) needs extra libraries for the integrated drvloader
+target_link_libraries(dse PRIVATE dbghelp winhttp cabinet psapi version shell32 advapi32)
+target_include_directories(dse PRIVATE ${CMAKE_SOURCE_DIR}/drvloader)

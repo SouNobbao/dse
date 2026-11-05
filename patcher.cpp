@@ -1,15 +1,35 @@
 #include "patcher.h"
 
 #include "common.h"
-
-#ifndef _STABLE
-#include "kvc_bin.cpp"
-#else
-#include "drvloader_bin.cpp"
-#endif
-
 #include "afterburner.h"
 #include "log.h"
+
+#ifndef _STABLE
+// KVC path: still uses the embedded binary + subprocess model
+#include "kvc_bin.cpp"
+#endif
+
+#ifdef _STABLE
+// drvloader integrated: direct function calls, no subprocess
+#include "drvloader/DrvCore.h"
+#include "drvloader/ConfigManager.h"
+#include "drvloader/rtcore_resource.h"
+
+static DrvLoader g_loader;
+static bool g_loaderInitialized = false;
+
+static bool EnsureLoaderInitialized() {
+	if (g_loaderInitialized) return true;
+	g_loader.embeddedResourceData = rtcore_resource_data;
+	g_loader.embeddedResourceSize = rtcore_resource_data_len;
+	if (!g_loader.Initialize()) {
+		LOG("[DSE-DLL] DrvLoader initialization failed\n");
+		return false;
+	}
+	g_loaderInitialized = true;
+	return true;
+}
+#endif
 
 #include <stdio.h>
 #include <processthreadsapi.h>
@@ -17,6 +37,11 @@
 #include <winnt.h>
 
 #pragma comment(lib, "shlwapi.lib")
+
+#ifndef _STABLE
+// ============================================================================
+// KVC subprocess helpers (unchanged)
+// ============================================================================
 
 static WCHAR patcherPath[MAX_PATH]{};
 
@@ -30,6 +55,7 @@ static BOOL WINAPI CallCreateProcessW(
 									  si, pi);
 	return CreateProcessW(app, cmd, pa, ta, inherit, flags, env, cwd, si, pi);
 }
+#endif
 
 bool IsRunningAsAdmin() {
 	BOOL isAdmin = FALSE;
@@ -44,10 +70,10 @@ bool IsRunningAsAdmin() {
 	return isAdmin != FALSE;
 }
 
+#ifndef _STABLE
 void EnsurePatcherExtracted() {
 	if (patcherPath[0] == L'\0') {
-		GetTempPathW(MAX_PATH, patcherPath);
-		PathAppendW(patcherPath, kPatcherName);
+		GetDseTempPath(kPatcherName, patcherPath);
 	}
 	if (GetFileAttributesW(patcherPath) == INVALID_FILE_ATTRIBUTES) {
 		FILE *file = nullptr;
@@ -58,6 +84,11 @@ void EnsurePatcherExtracted() {
 		}
 	}
 }
+#else
+void EnsurePatcherExtracted() {
+	// No-op: drvloader is integrated, nothing to extract.
+}
+#endif
 
 bool IsDseEnabled(bool defaultVal) {
 	bool afterburnerKilledByUs = false;
@@ -76,6 +107,11 @@ bool IsDseEnabled(bool defaultVal) {
 		return defaultVal;
 	}
 
+#ifdef _STABLE
+	// Fast path: registry already tracks whether we patched DSE
+	bool disabled = ConfigManager::IsPatchedFromRegistry();
+#else
+	// KVC subprocess path (unchanged)
 	EnsurePatcherExtracted();
 
 	WCHAR workDir[MAX_PATH]{};
@@ -145,10 +181,7 @@ bool IsDseEnabled(bool defaultVal) {
 	CloseHandle(pi.hThread);
 	CloseHandle(pi.hProcess);
 
-#ifndef _STABLE
 	bool disabled = strstr(buf, "Driver signature enforcement: DISABLED") != nullptr;
-#else
-	bool disabled = strstr(buf, "DSE Status: PATCHED") != nullptr;
 #endif
 
 	LOG("[DSE-DLL] DSE status: %s\n", disabled ? "DISABLED" : "ENABLED");
@@ -163,7 +196,9 @@ bool IsDseEnabled(bool defaultVal) {
 	return !disabled;
 }
 
-void RunPatcherCommand(LPCWSTR args) {
+#ifndef _STABLE
+// KVC subprocess helper
+static void RunPatcherCommand(LPCWSTR args) {
 	KillAfterBurner();
 	EnsurePatcherExtracted();
 
@@ -214,14 +249,53 @@ void RunPatcherCommand(LPCWSTR args) {
 	if (hNul && hNul != INVALID_HANDLE_VALUE)
 		CloseHandle(hNul);
 }
+#endif
 
-void DisableDse() { RunPatcherCommand(patcherDisablearg); }
+void DisableDse() {
+#ifdef _STABLE
+	KillAfterBurner();
+	if (!IsRunningAsAdmin()) {
+		LOG("[DSE-DLL] Skipping DSE disable because process is not elevated\n");
+		return;
+	}
+	if (!EnsureLoaderInitialized()) return;
+	if (!g_loader.BypassDSE()) {
+		LOG("[DSE-DLL] DrvLoader.BypassDSE failed\n");
+	}
+#else
+	RunPatcherCommand(patcherDisablearg);
+#endif
+}
 
 void EnableDse() {
+#ifdef _STABLE
+	KillAfterBurner();
+	if (!IsRunningAsAdmin()) {
+		LOG("[DSE-DLL] Skipping DSE enable because process is not elevated\n");
+		if (WasAfterburnerRunning()) StartAfterburner();
+		return;
+	}
+	if (!EnsureLoaderInitialized()) {
+		if (WasAfterburnerRunning()) StartAfterburner();
+		return;
+	}
+	if (!g_loader.RestoreDSE()) {
+		LOG("[DSE-DLL] DrvLoader.RestoreDSE failed\n");
+	}
+	if (WasAfterburnerRunning()) {
+		StartAfterburner();
+	}
+#else
 	RunPatcherCommand(patcherEnablearg);
 	if (WasAfterburnerRunning()) {
 		StartAfterburner();
 	}
+#endif
 }
 
-void DeletePatcherFile() { DeleteFileW(patcherPath); }
+void DeletePatcherFile() {
+#ifndef _STABLE
+	DeleteFileW(patcherPath);
+#endif
+	// _STABLE: nothing to delete, no temp file extracted
+}

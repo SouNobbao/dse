@@ -46,8 +46,7 @@ HMODULE g_hModule = nullptr;
 	PathRemoveFileSpecW(workDir);
 
 	WCHAR elevatorPath[MAX_PATH]{};
-	GetTempPathW(MAX_PATH, elevatorPath);
-	PathAppendW(elevatorPath, L"dse_elevator.exe");
+	GetDseTempPath(L"dse_elevator.exe", elevatorPath);
 
 	if (GetFileAttributesW(elevatorPath) == INVALID_FILE_ATTRIBUTES) {
 		HANDLE hFile = CreateFileW(elevatorPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
