@@ -7,7 +7,6 @@
 #include <cwchar>
 #include <shlwapi.h>
 #include <tlhelp32.h>
-#include "c_std/string/std_string.h"
 
 #pragma comment(lib, "advapi32.lib")
 
@@ -104,30 +103,21 @@ void ManageProblematicServices() {
 		return;
 	}
 
-	if (g_config.problematicServices) {
-		size_t svcCount = vector_size(g_config.problematicServices);
-		for (size_t i = 0; i < svcCount; ++i) {
-			ProblematicService **psvc = (ProblematicService **)vector_at(g_config.problematicServices, i);
-			ProblematicService *svc = psvc ? *psvc : nullptr;
-			if (!svc)
-				continue;
-			wchar_t *namew = string_to_unicode(string_c_str(svc->name));
-			SC_HANDLE hService = namew ? OpenServiceW(hSCM, namew, SERVICE_ALL_ACCESS) : NULL;
-			if (hService) {
-				if (svc->action == ServiceActionType::STOP) {
-					SERVICE_STATUS status;
-					ControlService(hService, SERVICE_CONTROL_STOP, &status);
-					LOG("[DSE-DLL] Stopped service %ls\n", namew);
-				} else if (svc->action == ServiceActionType::DELETE_SVC) {
-					DeleteService(hService);
-					LOG("[DSE-DLL] Deleted service %ls\n", namew);
-				}
-				CloseServiceHandle(hService);
-			} else {
-				LOG("[DSE-DLL] Could not open service %ls (err %lu)\n", namew, GetLastError());
+	for (const ProblematicService &svc : g_config.problematicServices) {
+		const wchar_t *namew = svc.name.c_str();
+		SC_HANDLE hService = OpenServiceW(hSCM, namew, SERVICE_ALL_ACCESS);
+		if (hService) {
+			if (svc.action == ServiceActionType::STOP) {
+				SERVICE_STATUS status;
+				ControlService(hService, SERVICE_CONTROL_STOP, &status);
+				LOG("[DSE-DLL] Stopped service %ls\n", namew);
+			} else if (svc.action == ServiceActionType::DELETE_SVC) {
+				DeleteService(hService);
+				LOG("[DSE-DLL] Deleted service %ls\n", namew);
 			}
-			if (namew)
-				free(namew);
+			CloseServiceHandle(hService);
+		} else {
+			LOG("[DSE-DLL] Could not open service %ls (err %lu)\n", namew, GetLastError());
 		}
 	}
 	CloseServiceHandle(hSCM);
@@ -138,32 +128,23 @@ void RestoreProblematicServices() {
 	if (!hSCM)
 		return;
 
-	if (g_config.problematicServices) {
-		size_t svcCount = vector_size(g_config.problematicServices);
-		for (size_t i = 0; i < svcCount; ++i) {
-			ProblematicService **psvc = (ProblematicService **)vector_at(g_config.problematicServices, i);
-			ProblematicService *svc = psvc ? *psvc : nullptr;
-			if (!svc)
-				continue;
-			if (svc->action == ServiceActionType::STOP) {
-				wchar_t *namew = string_to_unicode(string_c_str(svc->name));
-				SC_HANDLE hService = namew ? OpenServiceW(hSCM, namew, SERVICE_ALL_ACCESS) : NULL;
-				if (hService) {
-					if (!StartServiceW(hService, 0, nullptr)) {
-						DWORD err = GetLastError();
-						if (err != ERROR_SERVICE_ALREADY_RUNNING) {
-							LOG("[DSE-DLL] Failed to start service %ls (err %lu)\n", namew, err);
-						} else {
-							LOG("[DSE-DLL] Service %ls was already running (skipping)\n", namew);
-						}
-					} else {
-						LOG("[DSE-DLL] Restored (started) service %ls\n", namew);
-					}
-					CloseServiceHandle(hService);
+	for (const ProblematicService &svc : g_config.problematicServices) {
+		if (svc.action != ServiceActionType::STOP)
+			continue;
+		const wchar_t *namew = svc.name.c_str();
+		SC_HANDLE hService = OpenServiceW(hSCM, namew, SERVICE_ALL_ACCESS);
+		if (hService) {
+			if (!StartServiceW(hService, 0, nullptr)) {
+				DWORD err = GetLastError();
+				if (err != ERROR_SERVICE_ALREADY_RUNNING) {
+					LOG("[DSE-DLL] Failed to start service %ls (err %lu)\n", namew, err);
+				} else {
+					LOG("[DSE-DLL] Service %ls was already running (skipping)\n", namew);
 				}
-				if (namew)
-					free(namew);
+			} else {
+				LOG("[DSE-DLL] Restored (started) service %ls\n", namew);
 			}
+			CloseServiceHandle(hService);
 		}
 	}
 	CloseServiceHandle(hSCM);
@@ -195,20 +176,8 @@ static void KillProcessTreeByName(const wchar_t *name) {
 }
 
 void ManageProblematicTasks() {
-	if (g_config.problematicTasks) {
-		size_t tcount = vector_size(g_config.problematicTasks);
-		for (size_t i = 0; i < tcount; ++i) {
-			String **pst = (String **)vector_at(g_config.problematicTasks, i);
-			String *stok = pst ? *pst : nullptr;
-			if (!stok)
-				continue;
-			wchar_t *taskw = string_to_unicode(string_c_str(stok));
-			if (!taskw)
-				continue;
-			KillProcessTreeByName(taskw);
-			free(taskw);
-		}
-	}
+	for (const std::wstring &task : g_config.problematicTasks)
+		KillProcessTreeByName(task.c_str());
 }
 
 void WaitForWatchdogToExit() {

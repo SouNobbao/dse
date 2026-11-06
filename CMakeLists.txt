@@ -26,8 +26,6 @@ set(SOURCES
     minhook/src/trampoline.c
     minhook/src/hde/hde64.c
     minhook/src/hde/hde32.c
-    c_std/vector/vector.c
-    c_std/string/std_string.c
 )
 
 set(DRVLOADER_SOURCES
@@ -48,8 +46,6 @@ if(MSVC)
         minhook/src/trampoline.c
         minhook/src/hde/hde64.c
         minhook/src/hde/hde32.c
-        c_std/vector/vector.c
-        c_std/string/std_string.c
         PROPERTIES LANGUAGE C
     )
 

@@ -1,6 +1,6 @@
 #define WIN32_LEAN_AND_MEAN
 
-#include "c_std/vector/vector.h"
+#include <vector>
 #include "config.h"
 #include "log.h"
 #include "minhook/include/MinHook.h"
@@ -92,7 +92,7 @@ struct DLCInfo {
 	uint32_t appId;
 	char name[128];
 };
-static Vector *g_unlockedDlcs = nullptr;
+static std::vector<DLCInfo> g_unlockedDlcs;
 
 extern HMODULE g_hModule;
 
@@ -223,15 +223,13 @@ static void LoadSteamConfigFromDll(HMODULE hSteamApi) {
 					if (dlcId > 0) {
 						DLCInfo info = {dlcId, {0}};
 						WideCharToMultiByte(CP_UTF8, 0, val, -1, info.name, sizeof(info.name) - 1, nullptr, nullptr);
-						if (!g_unlockedDlcs)
-							g_unlockedDlcs = vector_create(sizeof(DLCInfo));
-						vector_push_back(g_unlockedDlcs, &info);
+						g_unlockedDlcs.push_back(info);
 					}
 				}
 			}
 			p += wcslen(p) + 1; // next string
 		}
-		LOG("[DSE-DLL] Config: unlock_all=%d, %d specific DLCs loaded from configs.app.ini\n", (int)g_unlockAllDlcs, (int)vector_size(g_unlockedDlcs));
+		LOG("[DSE-DLL] Config: unlock_all=%d, %d specific DLCs loaded from configs.app.ini\n", (int)g_unlockAllDlcs, (int)g_unlockedDlcs.size());
 	}
 
 	uint32_t appId = 0;
@@ -413,14 +411,9 @@ static bool CheckAppSubscribed(uint32_t appId) {
 	}
 	if (g_unlockAllDlcs)
 		return true;
-	if (g_unlockedDlcs) {
-		size_t dlcCount = vector_size(g_unlockedDlcs);
-		for (size_t di = 0; di < dlcCount; ++di) {
-			DLCInfo *dlc = (DLCInfo *)vector_at(g_unlockedDlcs, di);
-			if (dlc && dlc->appId == appId)
-				return true;
-		}
-	}
+	for (const DLCInfo &dlc : g_unlockedDlcs)
+		if (dlc.appId == appId)
+			return true;
 	return false;
 }
 
@@ -1057,14 +1050,10 @@ static bool Hooked_BIsDlcInstalled_vtable(void *self, uint32_t appID) {
 		LOG("[DSE-DLL] ISteamApps::BIsDlcInstalled(%u) -> true (unlock_all)\n", appID);
 		return true;
 	}
-	if (g_unlockedDlcs) {
-		size_t dlcCount = vector_size(g_unlockedDlcs);
-		for (size_t di = 0; di < dlcCount; ++di) {
-			DLCInfo *dlc = (DLCInfo *)vector_at(g_unlockedDlcs, di);
-			if (dlc && dlc->appId == appID) {
-				LOG("[DSE-DLL] ISteamApps::BIsDlcInstalled(%u) -> true (in list)\n", appID);
-				return true;
-			}
+	for (const DLCInfo &dlc : g_unlockedDlcs) {
+		if (dlc.appId == appID) {
+			LOG("[DSE-DLL] ISteamApps::BIsDlcInstalled(%u) -> true (in list)\n", appID);
+			return true;
 		}
 	}
 	LOG("[DSE-DLL] ISteamApps::BIsDlcInstalled(%u) -> false\n", appID);
@@ -1090,7 +1079,7 @@ static pfn_GetDLCCount_vtable Orig_GetDLCCount_vtable = nullptr;
 
 static int Hooked_GetDLCCount_vtable(void *self) {
 	(void)self;
-	int count = (int)(g_unlockedDlcs ? vector_size(g_unlockedDlcs) : 0);
+	int count = (int)g_unlockedDlcs.size();
 	LOG("[DSE-DLL] ISteamApps::GetDLCCount() -> %d (spoofed)\n", count);
 	return count;
 }
@@ -1100,23 +1089,18 @@ static pfn_BGetDLCDataByIndex_vtable Orig_BGetDLCDataByIndex_vtable = nullptr;
 
 static bool Hooked_BGetDLCDataByIndex_vtable(void *self, int iDLC, uint32_t *pAppID, bool *pbAvailable, char *pchName, int cchNameBufferSize) {
 	(void)self;
-	if (g_unlockedDlcs) {
-		int size = (int)vector_size(g_unlockedDlcs);
-		if (iDLC >= 0 && iDLC < size) {
-			DLCInfo *dlc = (DLCInfo *)vector_at(g_unlockedDlcs, iDLC);
-			if (dlc) {
-				if (pAppID)
-					*pAppID = dlc->appId;
-				if (pbAvailable)
-					*pbAvailable = true;
-				if (pchName && cchNameBufferSize > 0) {
-					memset(pchName, 0, cchNameBufferSize);
-					lstrcpynA(pchName, dlc->name, cchNameBufferSize);
-				}
-				LOG("[DSE-DLL] ISteamApps::BGetDLCDataByIndex(%d) -> spoofed AppId=%u\n", iDLC, dlc->appId);
-				return true;
-			}
+	if (iDLC >= 0 && iDLC < (int)g_unlockedDlcs.size()) {
+		const DLCInfo &dlc = g_unlockedDlcs[iDLC];
+		if (pAppID)
+			*pAppID = dlc.appId;
+		if (pbAvailable)
+			*pbAvailable = true;
+		if (pchName && cchNameBufferSize > 0) {
+			memset(pchName, 0, cchNameBufferSize);
+			lstrcpynA(pchName, dlc.name, cchNameBufferSize);
 		}
+		LOG("[DSE-DLL] ISteamApps::BGetDLCDataByIndex(%d) -> spoofed AppId=%u\n", iDLC, dlc.appId);
+		return true;
 	}
 	return false;
 }

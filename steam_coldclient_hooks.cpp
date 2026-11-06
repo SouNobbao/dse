@@ -105,13 +105,8 @@ static bool GetConfiguredSteamDir(WCHAR *steamDir, size_t steamDirChars) {
 		return false;
 
 	steamDir[0] = L'\0';
-	if (g_config.coldloaderhooks && g_config.steam_path && string_length(g_config.steam_path) > 0) {
-		wchar_t *tmp = string_to_unicode(string_c_str(g_config.steam_path));
-		if (!tmp)
-			return false;
-		bool copied = CopyWidePath(steamDir, steamDirChars, tmp, "configured steam_path");
-		free(tmp);
-		if (!copied)
+	if (g_config.coldloaderhooks && !g_config.steam_path.empty()) {
+		if (!CopyWidePath(steamDir, steamDirChars, g_config.steam_path.c_str(), "configured steam_path"))
 			return false;
 	} else if (!GetSteamInstallPath(steamDir, (DWORD)steamDirChars)) {
 		LOG("[DSE-DLL] Cannot find Steam install path in registry\n");
