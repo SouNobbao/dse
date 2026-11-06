@@ -22,24 +22,41 @@ jobs:
     - name: Setup utilities || Cache APT
       uses: awalsh128/cache-apt-pkgs-action@latest
       with:
-        packages: upx-ucl 7zip
+        packages: 7zip
+
+    - name: Resolve latest toolchain releases
+      id: versions
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        api() { curl -sSL -H "Authorization: Bearer $GITHUB_TOKEN" "$1"; }
+        pick() { grep -oE "\"browser_download_url\": *\"[^\"]*$1\"" | head -1 | cut -d'"' -f4; }
+        MINGW_URL=$(api https://api.github.com/repos/mstorsjo/llvm-mingw/releases/latest | pick 'ucrt-ubuntu-22\.04-x86_64\.tar\.xz')
+        UPX_URL=$(api https://api.github.com/repos/upx/upx/releases/latest | pick 'amd64_linux\.tar\.xz')
+        test -n "$MINGW_URL" && test -n "$UPX_URL"
+        echo "mingw_url=$MINGW_URL" >> "$GITHUB_OUTPUT"
+        echo "mingw_key=$(basename "$MINGW_URL" .tar.xz)" >> "$GITHUB_OUTPUT"
+        echo "upx_url=$UPX_URL" >> "$GITHUB_OUTPUT"
 
     - name: Cache llvm-mingw
       uses: actions/cache@v6
       id: cache-llvm-mingw
       with:
-        path: llvm-mingw-20251216-ucrt-ubuntu-22.04-x86_64
-        key: llvm-mingw-20251216-ucrt-ubuntu-22.04-x86_64
+        path: llvm-mingw
+        key: ${{ steps.versions.outputs.mingw_key }}
 
     - name: Setup llvm-mingw
       if: steps.cache-llvm-mingw.outputs.cache-hit != 'true'
       run: |
-        curl -L -o llvm-mingw.tar.xz "https://github.com/mstorsjo/llvm-mingw/releases/download/20251216/llvm-mingw-20251216-ucrt-ubuntu-22.04-x86_64.tar.xz"
-        tar -xf llvm-mingw.tar.xz
+        set -euo pipefail
+        curl -L -o llvm-mingw.tar.xz "${{ steps.versions.outputs.mingw_url }}"
+        mkdir -p llvm-mingw
+        tar -xf llvm-mingw.tar.xz -C llvm-mingw --strip-components=1
         rm llvm-mingw.tar.xz
 
     - name: Add llvm-mingw to PATH
-      run: echo "$PWD/llvm-mingw-20251216-ucrt-ubuntu-22.04-x86_64/bin" >> $GITHUB_PATH
+      run: echo "$PWD/llvm-mingw/bin" >> "$GITHUB_PATH"
 
     - name: Build DLLs with CMake
       run: |
@@ -59,6 +76,15 @@ jobs:
 
     - name: Copy extras to build
       run: cp -v extras/* build/
+
+    - name: Setup UPX (latest)
+      run: |
+        set -euo pipefail
+        curl -L -o upx.tar.xz "${{ steps.versions.outputs.upx_url }}"
+        mkdir -p upx
+        tar -xf upx.tar.xz -C upx --strip-components=1
+        rm upx.tar.xz
+        echo "$PWD/upx" >> "$GITHUB_PATH"
 
     - name: Compress DLLs with UPX
       run: |
