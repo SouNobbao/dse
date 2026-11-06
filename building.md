@@ -7,30 +7,16 @@
 
 ## Preparation
 
-Before building, ensure you have the necessary binaries (used to patch and elevate process) in `bins`
-- `drvloader` is available [here](http://github.com/SouNobbao/drvloader-fork/releases/latest)
-- `kvc` is available [here](https://github.com/wesmar/kvc/releases/tag/latest)
-- `dse_elevator.exe` is compiled from `elevator.cpp`
+Before building, ensure you have `dse_elevator.exe` (compiled from `elevator.cpp`) in `bins/`.
 
 ## Compiling
 
 1. Create a `build` directory in the project root.
-2. Run the following compilation command:
-
-> [!NOTE]
-> Use the `-D_STABLE` flag to build with **drvloader**. If omitted, it will build with **KVC**.
+2. Run CMake:
 
 ```bash
-clang++ --target=x86_64-w64-mingw32 -Oz -D_STABLE -Wno-deprecated -mwindows -municode -shared -static \
-    -Iminhook/include -I. \
-    -ffunction-sections -fdata-sections -fvisibility=hidden -fno-unwind-tables -fno-asynchronous-unwind-tables \
-    -fno-exceptions -fno-rtti -flto=thin \
-    config.cpp checks.cpp dllmain.cpp events.cpp injector.cpp patcher.cpp log.cpp watchdog.cpp afterburner.cpp hide_module.cpp \
-    minhook/src/buffer.c minhook/src/hook.c minhook/src/trampoline.c minhook/src/hde/hde64.c minhook/src/hde/hde32.c \
-    c_std/vector/vector.c c_std/string/std_string.c \
-    -fuse-ld=lld -Wl,--gc-sections -Wl,--icf=all -Wl,--as-needed \
-    -lshlwapi \
-    -o build/dse.dll
+cmake -B build -G "MinGW Makefiles"
+cmake --build build -j
 ```
 
 ## Disclaimer 

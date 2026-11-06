@@ -15,5 +15,7 @@ namespace ConfigManager {
     std::optional<uint64_t> LoadOriginalCallbackFromRegistry();
     bool ClearPatchStateFromRegistry();
     bool IsPatchedFromRegistry();
+    bool SaveOriginalCiOptionsToRegistry(uint32_t value);
+    std::optional<uint32_t> LoadOriginalCiOptionsFromRegistry();
     std::wstring GetWindowsBuildNumber();
 }

@@ -7,17 +7,15 @@
 extern HMODULE g_hModule;
 
 constexpr LPCWSTR kDseIniName = L"dse.ini";
-constexpr LPCWSTR kPatcherName = L"dse_patcher.exe";
 constexpr LPCWSTR kLockFileName = L"dse_off_from_start.lock";
 constexpr LPCWSTR kToggledLockFileName = L"dse_toggled.lock";
 constexpr LPCWSTR kElevationScriptName = L"dse_elev.ps1";
 constexpr LPCWSTR kTempSubdir = L"dsedll";
 
-// Returns %TEMP%\dsedll\<filename>, creating the directory if needed.
 inline bool GetDseTempPath(LPCWSTR filename, WCHAR (&out)[MAX_PATH]) {
 	GetTempPathW(MAX_PATH, out);
 	PathAppendW(out, kTempSubdir);
-	CreateDirectoryW(out, nullptr); // ok if exists
+	CreateDirectoryW(out, nullptr);
 	PathAppendW(out, filename);
 	return true;
 }

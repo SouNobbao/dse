@@ -13,9 +13,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    outputs:
-      drvloader_updated: ${{ steps.fetch_drvloader.outputs.drvloader_changed }}
-      kvc_updated: ${{ steps.fetch_kvc.outputs.kvc_changed }}
+    outputs: {}
 
     steps:
     - name: Checkout code
@@ -43,113 +41,6 @@ jobs:
     - name: Add llvm-mingw to PATH
       run: echo "$PWD/llvm-mingw-20251216-ucrt-ubuntu-22.04-x86_64/bin" >> $GITHUB_PATH
 
-    - name: Cache kvc binary
-      id: cache_kvc
-      uses: actions/cache@v4
-      with:
-        path: bins/kvc.exe
-        key: kvc-bin-${{ hashFiles('bins/kvc.exe') }}
-        restore-keys: |
-          kvc-bin-
-
-    - name: Fetch latest kvc from upstream
-      id: fetch_kvc
-      continue-on-error: true
-      run: |
-        set -euo pipefail
-
-        echo "Fetching latest kvc release..."
-
-        curl -fsSL -o kvc_release.7z \
-          "https://github.com/wesmar/kvc/releases/download/latest/kvc.7z"
-        mkdir -p kvc_extracted
-        7z x kvc_release.7z -okvc_extracted/ -pgithub.com
-
-        KVC_BIN=$(find kvc_extracted -type f \( -name "kvc.exe" -o -name "kvc" \) | head -n1)
-        if [[ -z "$KVC_BIN" ]]; then
-          echo "::warning::kvc binary not found inside upstream archive. Contents:"
-          find kvc_extracted -type f
-          echo "Falling back to repo copy."
-          exit 1
-        fi
-
-        mkdir -p bins
-
-        # Compare hash with cached version to skip redundant updates
-        if [[ -f bins/kvc.exe ]]; then
-          OLD_HASH=$(sha256sum bins/kvc.exe | cut -d' ' -f1)
-          NEW_HASH=$(sha256sum "$KVC_BIN" | cut -d' ' -f1)
-          if [[ "$OLD_HASH" == "$NEW_HASH" ]]; then
-            echo "kvc.exe unchanged (hash match), skipping update."
-            echo "kvc_changed=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-        fi
-
-        cp "$KVC_BIN" bins/kvc.exe
-        echo "kvc.exe updated from upstream"
-        echo "kvc_changed=true" >> $GITHUB_OUTPUT
-
-    - name: kvc source report
-      run: |
-        if [[ "${{ steps.fetch_kvc.outcome }}" == "success" ]]; then
-          echo "Using upstream kvc binary for build."
-        elif [[ -f bins/kvc.exe ]]; then
-          echo "Upstream fetch failed, using existing bins/kvc.exe from repo."
-        else
-          echo "::error::No bins/kvc.exe available and upstream fetch failed. Aborting."
-          exit 1
-        fi
-
-    - name: Cache drvloader binary
-      id: cache_drvloader
-      uses: actions/cache@v4
-      with:
-        path: bins/drvloader.exe
-        key: drvloader-bin-${{ hashFiles('bins/drvloader.exe') }}
-        restore-keys: |
-          drvloader-bin-
-
-    - name: Fetch latest drvloader from upstream
-      id: fetch_drvloader
-      continue-on-error: true
-      run: |
-        set -euo pipefail
-
-        echo "Fetching latest drvloader release..."
-
-        curl -fsSL -o drvloader.exe \
-          "https://github.com/SouNobbao/drvloader-fork/releases/latest/download/drvloader.exe"
-
-        mkdir -p bins
-
-        # Compare hash with cached version to skip redundant updates
-        if [[ -f bins/drvloader.exe ]]; then
-          OLD_HASH=$(sha256sum bins/drvloader.exe | cut -d' ' -f1)
-          NEW_HASH=$(sha256sum drvloader.exe | cut -d' ' -f1)
-          if [[ "$OLD_HASH" == "$NEW_HASH" ]]; then
-            echo "drvloader.exe unchanged (hash match), skipping update."
-            echo "drvloader_changed=false" >> $GITHUB_OUTPUT
-            rm -f drvloader.exe
-            exit 0
-          fi
-        fi
-
-        mv drvloader.exe bins/drvloader.exe
-        echo "drvloader.exe updated from upstream"
-        echo "drvloader_changed=true" >> $GITHUB_OUTPUT
-
-    - name: drvloader source report
-      run: |
-        if [[ "${{ steps.fetch_drvloader.outcome }}" == "success" ]]; then
-          echo "Using upstream drvloader binary for build."
-        elif [[ -f bins/drvloader.exe ]]; then
-          echo "Upstream fetch failed, using existing bins/drvloader.exe from repo."
-        else
-          echo "::error::No bins/drvloader.exe available and upstream fetch failed. Aborting."
-          exit 1
-        fi
-
     - name: Build DLLs with CMake
       run: |
         set -euo pipefail
@@ -159,7 +50,7 @@ jobs:
         # build elevator executable with clang (small standalone target)
         clang++ --target=x86_64-w64-mingw32 -Oz -mwindows -municode -static -x c++ -fuse-ld=lld -ffunction-sections -fdata-sections -flto=thin -Wl,--gc-sections -Wl,--strip-all elevator.cpp -lshell32 -lshlwapi -o bins/dse_elevator.exe
 
-        # Configure and build with CMake (produces dse.dll and dse_kvc.dll)
+        # Configure and build with CMake (produces dse.dll)
         cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_C_COMPILER=x86_64-w64-mingw32-clang -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-clang++
         cmake --build build -- -j $(nproc)
 
@@ -206,7 +97,6 @@ jobs:
         set -euo pipefail
         cd release
         if [ -f build/dse.dll ]; then mv -f build/dse.dll . || true; fi
-        if [ -f build/dse_kvc.dll ]; then mv -f build/dse_kvc.dll . || true; fi
 
         # Move other helper tools into release root (avoid overwriting dse dlls)
         shopt -s globstar || true
@@ -226,7 +116,6 @@ jobs:
 
         # Remove any stray MSVC dse.dll copies (keep the linux-provided root copy)
         find . -type f -name 'dse.dll' -not -path './dse.dll' -delete || true
-        find . -type f -name 'dse_kvc.dll' -not -path './dse_kvc.dll' -delete || true
 
         # Clean up nested empty release folders if any
         find . -type d -empty -not -path '.' -delete || true
@@ -238,39 +127,16 @@ jobs:
         cd release
         {
           echo "sha256<<EOF"
-          find . -maxdepth 1 -type f ! -name 'sha256hashes.txt' ! -name 'drvloader.exe' ! -name 'dse_elevator.exe' ! -name 'kvc.exe' -print0 | sort -z | xargs -0 sha256sum | sed 's|^\([a-f0-9]\+\)  \./|\1  |' | tee sha256hashes.txt
+          find . -maxdepth 1 -type f ! -name 'sha256hashes.txt' ! -name 'dse_elevator.exe' -print0 | sort -z | xargs -0 sha256sum | sed 's|^\([a-f0-9]\+\)  \./|\1  |' | tee sha256hashes.txt
           echo "EOF"
         } >> "$GITHUB_OUTPUT"
 
     - name: Generate release info
       id: release_info
-      env:
-        KVC_UPDATED: ${{ needs.build.outputs.kvc_updated }}
-        DRVLOADER_UPDATED: ${{ needs.build.outputs.drvloader_updated }}
       run: |
         echo "tag=v$(date +'%Y.%m.%d')-${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
         echo "date=$(date +'%Y-%m-%d %H:%M:%S UTC')" >> "$GITHUB_OUTPUT"
         echo "month_year=$(date +'%m.%Y')" >> "$GITHUB_OUTPUT"
-
-        if [ "$KVC_UPDATED" = "true" ]; then
-          {
-            echo "kvc_note<<EOF"
-            echo "- kvc was updated to latest ([kvc repo](https://github.com/wesmar/kvc/))"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-        else
-          echo "kvc_note=" >> "$GITHUB_OUTPUT"
-        fi
-
-        if [ "$DRVLOADER_UPDATED" = "true" ]; then
-          {
-            echo "drvloader_note<<EOF"
-            echo "- drvloader was updated to latest ([drvloader repo](https://github.com/SouNobbao/drvloader-fork/))"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-        else
-          echo "drvloader_note=" >> "$GITHUB_OUTPUT"
-        fi
 
     - name: Create Release
       uses: softprops/action-gh-release@v3
@@ -282,18 +148,14 @@ jobs:
 
           **Changes:**
           ${{ github.event.head_commit.message }}
-          ${{ steps.release_info.outputs.kvc_note }}
-          ${{ steps.release_info.outputs.drvloader_note }}
 
           > [!NOTE]
-          > Note for Windows 11 Insider users: this build doesnt provide pdbs from time to time (in case drvloader doesn't work),
-          > so use KVC build as drvloader does not run correctly without those pdbs
-          > also note we can't rely on kvc --safe mode as the command (`kvc dse`) does not show its state, so bsods may happen
+          > If PDBs are unavailable (e.g. Windows Insider builds), dse.dll will automatically
+          > offer to fall back to the standard g_CiOptions method via a MessageBox prompt.
 
           ```
           Includes:
-          - dse.dll : toggle dse modes via drvloader (check dse.ini for config) (contains export to add to launchers)
-          - dse_kvc.dll : toggle dse modes via kvc
+          - dse.dll : toggle dse modes (check dse.ini for config) (contains export to add to launchers)
 
           Launchers (these launchers already have dse.dll linked, so you can replace the original launcher with these or link it manually):
           - hypervisor-launcher.exe
@@ -312,7 +174,6 @@ jobs:
         prerelease: false
         files: |
           ./release/dse.dll
-          ./release/dse_kvc.dll
           ./release/hypervisor-launcher.exe
           ./release/steamclient_loader_x64.exe
           ./release/build.7z
@@ -349,10 +210,8 @@ jobs:
         # Prepare bins dir
         md bins -Force | Out-Null
 
-        # If linux/minGW artifacts provided an elevator/kvc/drvloader, copy them into bins
+        # If linux/minGW artifacts provided an elevator, copy it into bins
         if (Test-Path '.\linux_artifacts\bins\dse_elevator.exe') { copy .\linux_artifacts\bins\dse_elevator.exe .\bins\dse_elevator.exe }
-
-        if (Test-Path '.\linux_artifacts\bins\kvc.exe') { copy .\linux_artifacts\bins\kvc.exe .\bins\kvc.exe }
 
         # Build elevator.exe via cl only if not provided by linux artifacts
         if (-not (Test-Path '.\bins\dse_elevator.exe')) {
@@ -364,8 +223,6 @@ jobs:
         function Get-Hex([string]$path){ if ($xxd) { $i = & xxd -i $path | Out-String; $m = [regex]::Match($i,'\{([\s\S]*)\}\s*;'); if ($m.Success){ return $m.Groups[1].Value } else { throw 'xxd parse failed' } } else { $b = [System.IO.File]::ReadAllBytes($path); return ($b | ForEach-Object { '0x' + $_.ToString('x2') }) -join ', ' } }
         if (Test-Path '.\bins\dse_elevator.exe') { $el = Get-Hex '.\bins\dse_elevator.exe'; (Get-Content '.\elevator_bin.cpp' -Raw) -replace '%placeholder_el_bin%',$el | Set-Content '.\elevator_bin.cpp' -Encoding ASCII }
 
-        if (Test-Path '.\bins\kvc.exe') { $kvc = Get-Hex '.\bins\kvc.exe'; (Get-Content '.\kvc_bin.cpp' -Raw) -replace '%placeholder_kvc_bin%',$kvc | Set-Content '.\kvc_bin.cpp' -Encoding ASCII }
-
         # Configure and build with NMake
         cmake -S . -B build-msvc -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release
         cmake --build build-msvc --config Release
@@ -373,11 +230,7 @@ jobs:
         # Copy outputs
         md release -Force | Out-Null
         copy build-msvc\dse.dll release\dse.dll
-        copy build-msvc\dse_kvc.dll release\dse_kvc.dll
         copy bins\dse_elevator.exe release\dse_elevator.exe
-
-        # Also include linux-provided kvc inside the MSVC package if present
-        if (Test-Path '.\bins\kvc.exe') { copy .\bins\kvc.exe release\kvc.exe }
 
         # Generate a self-signed PFX and sign DLLs before packaging
         Write-Host "Generating self-signed PFX on runner"
@@ -399,7 +252,6 @@ jobs:
           $sigtool = "signtool"
           # Sign DLLs
           if (Test-Path 'release\dse.dll') { & $sigtool sign /f $pfxOut /p $env:SIGNING_PASSWORD /tr http://timestamp.digicert.com /td sha256 /fd sha256 release\dse.dll }
-          if (Test-Path 'release\dse_kvc.dll') { & $sigtool sign /f $pfxOut /p $env:SIGNING_PASSWORD /tr http://timestamp.digicert.com /td sha256 /fd sha256 release\dse_kvc.dll }
           Remove-Item $pfxOut -Force
         } else {
           Write-Host "Failed to generate signing secrets; skipping code signing"
@@ -410,7 +262,6 @@ jobs:
         if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
         New-Item -ItemType Directory -Path (Join-Path $tmp '_msvc') | Out-Null
         copy release\dse.dll (Join-Path $tmp '_msvc\dse.dll')
-        copy release\dse_kvc.dll (Join-Path $tmp '_msvc\dse_kvc.dll')
         $zipPath = Join-Path $PWD 'release\dse_msvc.zip'
         if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
         Compress-Archive -Path (Join-Path $tmp '*') -DestinationPath $zipPath

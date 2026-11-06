@@ -1,4 +1,5 @@
 #include "DrvCore.h"
+#include "CiOptionsFinder.h"
 #include "ConfigManager.h"
 #include "ResourceInstaller.h"
 #include "drvlog.h"
@@ -507,4 +508,150 @@ bool DrvLoader::RestoreDSE() {
     StopAndRemoveDriver();
     DeleteDriverFile();
     return result;
+}
+
+std::optional<uint64_t> DrvLoader::FindCiDllBase() {
+    std::vector<LPVOID> drivers(1024);
+    DWORD needed = 0;
+    if (!EnumDeviceDrivers(drivers.data(), static_cast<DWORD>(drivers.size() * sizeof(LPVOID)), &needed))
+        return std::nullopt;
+
+    DWORD count = needed / sizeof(LPVOID);
+    for (DWORD i = 0; i < count; i++) {
+        WCHAR name[MAX_PATH];
+        if (GetDeviceDriverBaseNameW(drivers[i], name, MAX_PATH) && _wcsicmp(name, L"CI.dll") == 0)
+            return reinterpret_cast<uint64_t>(drivers[i]);
+    }
+    return std::nullopt;
+}
+
+std::optional<uint64_t> DrvLoader::FindCiOptionsAddress() {
+    auto ciBase = FindCiDllBase();
+    if (!ciBase) {
+        DRVLOG(L"Failed to find ci.dll in kernel\n");
+        return std::nullopt;
+    }
+    DRVLOG(L"ci.dll base: 0x%llX\n", *ciBase);
+
+    CiOptionsFinder finder(this);
+    uint64_t addr = finder.FindCiOptions(*ciBase);
+    if (addr == 0) {
+        DRVLOG(L"CiOptionsFinder failed to locate g_CiOptions\n");
+        return std::nullopt;
+    }
+    return addr;
+}
+
+bool DrvLoader::DisableDSEStandard() {
+    DRVLOG(L"DSE Bypass (standard g_CiOptions method)...\n");
+
+    if (!InstallAndStartDriver()) return false;
+
+    hDriver = CreateFileW(L"\\\\.\\RTCore64", GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (hDriver == INVALID_HANDLE_VALUE) {
+        StopAndRemoveDriver();
+        DeleteDriverFile();
+        return false;
+    }
+
+    auto addr = FindCiOptionsAddress();
+    if (!addr) {
+        Cleanup(); StopAndRemoveDriver(); DeleteDriverFile();
+        return false;
+    }
+
+    auto current = ReadMemory32(*addr);
+    if (!current) {
+        DRVLOG(L"Failed to read g_CiOptions\n");
+        Cleanup(); StopAndRemoveDriver(); DeleteDriverFile();
+        return false;
+    }
+
+    DRVLOG(L"Current g_CiOptions: 0x%08X\n", *current);
+
+    if (*current == 0) {
+        DRVLOG(L"DSE already disabled\n");
+        Cleanup(); StopAndRemoveDriver(); DeleteDriverFile();
+        return true;
+    }
+
+    m_originalCiOptions = *current;
+    m_ciOptionsAddr = *addr;
+
+    if (!WriteMemory32(*addr, 0)) {
+        DRVLOG(L"Failed to write g_CiOptions\n");
+        Cleanup(); StopAndRemoveDriver(); DeleteDriverFile();
+        return false;
+    }
+
+    auto verify = ReadMemory32(*addr);
+    if (!verify || *verify != 0) {
+        DRVLOG(L"g_CiOptions verification failed\n");
+        Cleanup(); StopAndRemoveDriver(); DeleteDriverFile();
+        return false;
+    }
+
+    DRVLOG(L"DSE disabled via g_CiOptions (0x%08X -> 0)\n", m_originalCiOptions);
+    ConfigManager::SaveOriginalCiOptionsToRegistry(m_originalCiOptions);
+
+    Cleanup();
+    StopAndRemoveDriver();
+    DeleteDriverFile();
+    return true;
+}
+
+bool DrvLoader::RestoreDSEStandard() {
+    DRVLOG(L"Restore DSE (standard g_CiOptions method)...\n");
+
+    auto saved = ConfigManager::LoadOriginalCiOptionsFromRegistry();
+    DWORD restoreValue = saved.value_or(0x6);
+
+    if (!InstallAndStartDriver()) return false;
+
+    hDriver = CreateFileW(L"\\\\.\\RTCore64", GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (hDriver == INVALID_HANDLE_VALUE) {
+        StopAndRemoveDriver();
+        DeleteDriverFile();
+        return false;
+    }
+
+    auto addr = FindCiOptionsAddress();
+    if (!addr) {
+        Cleanup(); StopAndRemoveDriver(); DeleteDriverFile();
+        return false;
+    }
+
+    auto current = ReadMemory32(*addr);
+    if (!current) {
+        Cleanup(); StopAndRemoveDriver(); DeleteDriverFile();
+        return false;
+    }
+
+    if ((*current & 0x6) != 0) {
+        DRVLOG(L"DSE already enabled (g_CiOptions = 0x%08X)\n", *current);
+        ConfigManager::ClearPatchStateFromRegistry();
+        Cleanup(); StopAndRemoveDriver(); DeleteDriverFile();
+        return true;
+    }
+
+    if (!WriteMemory32(*addr, restoreValue)) {
+        DRVLOG(L"Failed to restore g_CiOptions\n");
+        Cleanup(); StopAndRemoveDriver(); DeleteDriverFile();
+        return false;
+    }
+
+    auto verify = ReadMemory32(*addr);
+    if (!verify || *verify != restoreValue) {
+        DRVLOG(L"g_CiOptions restore verification failed\n");
+        Cleanup(); StopAndRemoveDriver(); DeleteDriverFile();
+        return false;
+    }
+
+    DRVLOG(L"DSE restored via g_CiOptions (0 -> 0x%08X)\n", restoreValue);
+    ConfigManager::ClearPatchStateFromRegistry();
+
+    Cleanup();
+    StopAndRemoveDriver();
+    DeleteDriverFile();
+    return true;
 }

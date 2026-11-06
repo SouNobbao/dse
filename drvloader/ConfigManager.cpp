@@ -28,7 +28,7 @@ bool UpdateDriversIni(uint64_t seCiCallbacks, uint64_t safeFunction) {
     std::wstring filePath = GetDriversIniPath();
 
     if (GetFileAttributesW(filePath.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        DRVLOG(L"drivers.ini not found - skipping file update\n");
+        DRVLOG(L"drivers.ini not found... skipping file update\n");
         return false;
     }
 
@@ -284,6 +284,7 @@ bool ClearPatchStateFromRegistry() {
     }
 
     RegDeleteValueW(hKey, L"OriginalCallback");
+    RegDeleteValueW(hKey, L"OriginalCiOptions");
     RegDeleteValueW(hKey, L"PatchTimestamp");
 
     DWORD isPatched = 0;
@@ -292,6 +293,47 @@ bool ClearPatchStateFromRegistry() {
     RegCloseKey(hKey);
     DRVLOG(L"Cleared patch state from registry\n");
     return true;
+}
+
+bool SaveOriginalCiOptionsToRegistry(uint32_t value) {
+    HKEY hKey;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\drvloader\\LatestState", 0, nullptr,
+        REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hKey, nullptr) != ERROR_SUCCESS)
+        return false;
+
+    RegSetValueExW(hKey, L"OriginalCiOptions", 0, REG_DWORD, (BYTE*)&value, sizeof(DWORD));
+
+    DWORD isPatched = 1;
+    RegSetValueExW(hKey, L"IsPatched", 0, REG_DWORD, (BYTE*)&isPatched, sizeof(DWORD));
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    wchar_t ts[64];
+    swprintf_s(ts, L"%04d-%02d-%02d %02d:%02d:%02d",
+        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    RegSetValueExW(hKey, L"PatchTimestamp", 0, REG_SZ, (BYTE*)ts,
+        (DWORD)((wcslen(ts) + 1) * sizeof(wchar_t)));
+
+    RegCloseKey(hKey);
+    DRVLOG(L"Saved OriginalCiOptions to registry: 0x%08X\n", value);
+    return true;
+}
+
+std::optional<uint32_t> LoadOriginalCiOptionsFromRegistry() {
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\drvloader\\LatestState", 0,
+        KEY_READ, &hKey) != ERROR_SUCCESS)
+        return std::nullopt;
+
+    DWORD val = 0, size = sizeof(val);
+    if (RegQueryValueExW(hKey, L"OriginalCiOptions", nullptr, nullptr,
+        (BYTE*)&val, &size) != ERROR_SUCCESS) {
+        RegCloseKey(hKey);
+        return std::nullopt;
+    }
+
+    RegCloseKey(hKey);
+    return val;
 }
 
 bool IsPatchedFromRegistry() {

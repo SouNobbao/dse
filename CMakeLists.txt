@@ -30,16 +30,15 @@ set(SOURCES
     c_std/string/std_string.c
 )
 
-# Integrated drvloader sources (only compiled into dse target, not dse_kvc)
 set(DRVLOADER_SOURCES
     drvloader/DrvCore.cpp
+    drvloader/CiOptionsFinder.cpp
     drvloader/ConfigManager.cpp
     drvloader/SymbolDownloader.cpp
     drvloader/ResourceInstaller.cpp
 )
 
 add_library(dse SHARED ${SOURCES} ${DRVLOADER_SOURCES})
-add_library(dse_kvc SHARED ${SOURCES})
 
 # Ensure C sources are compiled as C when using MSVC
 if(MSVC)
@@ -104,22 +103,14 @@ else()
     )
 endif()
 
-foreach(TARGET dse dse_kvc)
-    target_include_directories(${TARGET} PRIVATE minhook/include ${CMAKE_SOURCE_DIR})
-    set_target_properties(${TARGET} PROPERTIES PREFIX "")
-    target_compile_definitions(${TARGET} PRIVATE UNICODE _UNICODE)
-    target_link_libraries(${TARGET} PRIVATE shlwapi)
+target_include_directories(dse PRIVATE minhook/include ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/drvloader)
+set_target_properties(dse PROPERTIES PREFIX "")
+target_compile_definitions(dse PRIVATE UNICODE _UNICODE)
+target_link_libraries(dse PRIVATE shlwapi dbghelp winhttp cabinet psapi version shell32 advapi32)
 
-    target_compile_options(${TARGET} PRIVATE ${COMPILER_OPTIONS})
-    target_link_options(${TARGET} PRIVATE ${LINKER_OPTIONS})
+target_compile_options(dse PRIVATE ${COMPILER_OPTIONS})
+target_link_options(dse PRIVATE ${LINKER_OPTIONS})
 
-    if(MSVC)
-        target_compile_definitions(${TARGET} PRIVATE _M_X64 _AMD64_)
-    endif()
-endforeach()
-
-target_compile_definitions(dse PRIVATE _STABLE)
-
-# dse (STABLE) needs extra libraries for the integrated drvloader
-target_link_libraries(dse PRIVATE dbghelp winhttp cabinet psapi version shell32 advapi32)
-target_include_directories(dse PRIVATE ${CMAKE_SOURCE_DIR}/drvloader)
+if(MSVC)
+    target_compile_definitions(dse PRIVATE _M_X64 _AMD64_)
+endif()

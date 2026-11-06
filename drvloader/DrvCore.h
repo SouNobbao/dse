@@ -52,6 +52,8 @@ public:
     bool CheckDSEStatus(bool& isPatched);
     bool BypassDSE();
     bool RestoreDSE();
+    bool DisableDSEStandard();
+    bool RestoreDSEStandard();
 
 private:
     std::optional<uint64_t> GetNtoskrnlBase();
@@ -64,4 +66,10 @@ private:
 
     bool BypassDSEInternal();
     bool RestoreDSEInternal();
+
+    std::optional<uint64_t> FindCiDllBase();
+    std::optional<uint64_t> FindCiOptionsAddress();
+
+    uint64_t m_ciOptionsAddr = 0;
+    uint32_t m_originalCiOptions = 0;
 };
