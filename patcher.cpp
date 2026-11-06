@@ -102,7 +102,7 @@ void DisableDse() {
 		L"PDB-based DSE bypass failed.\n\n"
 		L"Switch to standard method (g_CiOptions)?\n"
 		L"This modifies kernel code integrity flags directly.",
-		L"DSE Bypass", MB_OKCANCEL | MB_ICONWARNING | MB_SYSTEMMODAL);
+		L"Warning", MB_OKCANCEL | MB_ICONWARNING | MB_SYSTEMMODAL);
 
 	if (choice != IDOK) {
 		LOG("[DSE-DLL] User cancelled standard fallback\n");
