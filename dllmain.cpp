@@ -15,6 +15,7 @@
 
 #include <shellapi.h>
 #include <shlwapi.h>
+#include <taskschd.h>
 #include <windows.h>
 
 #pragma comment(lib, "shlwapi.lib")
@@ -43,11 +44,134 @@ HMODULE g_hModule = nullptr;
 
 #include "elevator_bin.cpp"
 
-[[noreturn]] static void RelaunchElevatedAndExit() {
-	LOG("[DSE-DLL] Not admin elevating, spawning dse_elevator.exe ...\n");
+static bool RunPreRegisteredElevationTask(LPCWSTR selfExePath) {
+	WCHAR taskName[MAX_PATH]{};
+	lstrcpynW(taskName, L"dse_", ARRAYSIZE(taskName));
+	WCHAR base[MAX_PATH]{};
+	lstrcpynW(base, PathFindFileNameW(selfExePath), ARRAYSIZE(base));
+	PathRemoveExtensionW(base);
+	lstrcatW(taskName, base);
 
+	HRESULT hrInit = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+	bool uninit = SUCCEEDED(hrInit);
+
+	ITaskService *svc = nullptr;
+	ITaskFolder *folder = nullptr;
+	IRegisteredTask *task = nullptr;
+	ITaskDefinition *def = nullptr;
+	IPrincipal *principal = nullptr;
+	IActionCollection *actions = nullptr;
+	IAction *action = nullptr;
+	IExecAction *exec = nullptr;
+	BSTR bstr = nullptr;
+	bool ran = false;
+
+	VARIANT v;
+	VariantInit(&v);
+
+	if (FAILED(CoCreateInstance(CLSID_TaskScheduler, nullptr, CLSCTX_INPROC_SERVER,
+								IID_ITaskService, (void **)&svc)))
+		goto done;
+	if (FAILED(svc->Connect(v, v, v, v)))
+		goto done;
+
+	bstr = SysAllocString(L"\\");
+	if (FAILED(svc->GetFolder(bstr, &folder)))
+		goto done;
+	SysFreeString(bstr);
+	bstr = nullptr;
+
+	bstr = SysAllocString(taskName);
+	if (FAILED(folder->GetTask(bstr, &task)) || !task) {
+		LOG("[DSE-DLL] Elevation task '%ls' not registered.\n", taskName);
+		goto done;
+	}
+	SysFreeString(bstr);
+	bstr = nullptr;
+
+	if (FAILED(task->get_Definition(&def)))
+		goto done;
+
+	// Refuse a task that isn't highest run level (fall back to UAC).
+	if (FAILED(def->get_Principal(&principal)))
+		goto done;
+	{
+		TASK_RUNLEVEL_TYPE rl = TASK_RUNLEVEL_LUA;
+		if (FAILED(principal->get_RunLevel(&rl)) || rl != TASK_RUNLEVEL_HIGHEST) {
+			LOG("[DSE-DLL] Elevation task '%ls' is not highest run level, ignoring.\n", taskName);
+			goto done;
+		}
+	}
+
+	// exactly one exec action, whose path is this exact exe.
+	if (FAILED(def->get_Actions(&actions)))
+		goto done;
+	{
+		LONG count = 0;
+		if (FAILED(actions->get_Count(&count)) || count != 1) {
+			LOG("[DSE-DLL] Elevation task '%ls' has %ld actions (want 1), ignoring.\n", taskName, count);
+			goto done;
+		}
+	}
+	if (FAILED(actions->get_Item(1, &action)))
+		goto done;
+	if (FAILED(action->QueryInterface(IID_IExecAction, (void **)&exec)))
+		goto done;
+	if (FAILED(exec->get_Path(&bstr)) || !bstr)
+		goto done;
+	if (_wcsicmp(bstr, selfExePath) != 0) {
+		LOG("[DSE-DLL] Elevation task path mismatch ('%ls' != '%ls'), ignoring.\n", bstr, selfExePath);
+		goto done;
+	}
+	SysFreeString(bstr);
+	bstr = nullptr;
+
+	{
+		IRunningTask *running = nullptr;
+		if (SUCCEEDED(task->Run(v, &running))) {
+			ran = true;
+			if (running)
+				running->Release();
+			LOG("[DSE-DLL] Elevation task '%ls' launched.\n", taskName);
+		} else {
+			LOG("[DSE-DLL] Elevation task '%ls' Run() failed (permissions?), falling back.\n", taskName);
+		}
+	}
+
+done:
+	if (bstr)
+		SysFreeString(bstr);
+	if (exec)
+		exec->Release();
+	if (action)
+		action->Release();
+	if (actions)
+		actions->Release();
+	if (principal)
+		principal->Release();
+	if (def)
+		def->Release();
+	if (task)
+		task->Release();
+	if (folder)
+		folder->Release();
+	if (svc)
+		svc->Release();
+	if (uninit)
+		CoUninitialize();
+	return ran;
+}
+
+static void RelaunchElevatedAndExit() {
 	WCHAR exePath[MAX_PATH]{};
 	GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+
+	if (RunPreRegisteredElevationTask(exePath)) {
+		LOG("[DSE-DLL] Elevated via scheduled task, terminating non-admin instance.\n");
+		ExitProcess(0);
+	}
+
+	LOG("[DSE-DLL] Not admin, no valid task, spawning dse_elevator.exe ...\n");
 
 	WCHAR workDir[MAX_PATH]{};
 	lstrcpynW(workDir, exePath, MAX_PATH);

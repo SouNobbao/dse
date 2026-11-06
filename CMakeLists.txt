@@ -65,7 +65,7 @@ set(LINKER_OPTIONS
 target_include_directories(dse PRIVATE minhook/include ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/drvloader)
 set_target_properties(dse PROPERTIES PREFIX "")
 target_compile_definitions(dse PRIVATE UNICODE _UNICODE)
-target_link_libraries(dse PRIVATE shlwapi dbghelp winhttp cabinet psapi version shell32 advapi32)
+target_link_libraries(dse PRIVATE shlwapi dbghelp winhttp cabinet psapi version shell32 advapi32 taskschd ole32 oleaut32 uuid)
 
 target_compile_options(dse PRIVATE ${COMPILER_OPTIONS})
 target_link_options(dse PRIVATE ${LINKER_OPTIONS})
