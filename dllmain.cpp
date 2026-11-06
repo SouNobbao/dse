@@ -25,6 +25,13 @@ static bool g_isLauncher = false;
 
 extern "C" __declspec(dllexport) void DseDll(void) {}
 
+// linker adds this causing more size
+extern "C" char *__cxa_demangle(const char *, char *, size_t *, int *status) {
+	if (status)
+		*status = -1;
+	return nullptr;
+}
+
 HMODULE g_hModule = nullptr;
 
 #include "steam_hooks.cpp"
