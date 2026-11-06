@@ -2,7 +2,7 @@
 
 ## What dse does
 
-The DLL extracts [`drvloader`](https://codeberg.org/SouNobbao/drvloader-fork) or [`kvc`](https://github.com/wesmar/kvc/releases/tag/latest) and a [temporary executable](https://codeberg.org/sounobbao/dse/src/branch/master/elevator.cpp) that's compiled on this repo.
+The DLL extracts a [temporary executable](https://codeberg.org/sounobbao/dse/src/branch/master/elevator.cpp) that's compiled on the action build of this repo.
 
 Upon opening the game, it checks if you're running under the test-signed setup or you alterady have Driver Signature Enforncement previously off. [checks are here](https://codeberg.org/sounobbao/dse/src/branch/master/checks.cpp)
 
@@ -14,10 +14,10 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
 
 ## How to use
 
-1. Add the DLL to the load list (`reflex.ini`, `xxxowo.ini`) example setups.
+1. Add the DLL to the load list (`xxxxex.ini`, `xxxowo.ini`) example setups.
     ### Example setups
     ```
-    reflex.ini
+    xxxex.ini
     [load_dlls]
     0=dse.dll
     ```
@@ -29,7 +29,7 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
     ```
 
     ```
-    artifact.json
+    xxxxxact.json
     "load_dlls": ["dse.dll"],
     ```
 2. Configure `dse.ini` if needed.
@@ -64,11 +64,10 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
     ```
 2. Add the DLL to the load list.
 3. Remove `coldclient/loader.dll`.
-4. Use [OpenSteamTool](https://github.com/OpenSteam001/OpenSteamTool).
-5. Put Lua files in `steam/config/lua` and manifests in `steam/depotcache`.
-6. Click Play.
+4. Use your favorite steamtool.
+5. Click Play.
 
-### In cases where the game only works with coldclient setups (SCDLC/CAP/2k)
+### In cases where the game only works with coldclient setups
 1. Enable in config (`dse.ini`) file `steamHooks=1/true/yes` and `coldloaderhooks=1/true/yes`
 
     1.1 Make sure that `steam_path` is set to your steam path, and you have `coldclient` near dse.dll or exe 
@@ -109,7 +108,7 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
     > This creates a hardlink (copy if it fails) of `steamclient64.dll` named `steamclient64_valve.dll` in your steam folder
 
 3. Use [OpenSteamTool](https://github.com/OpenSteam001/OpenSteamTool).
-4. Put Lua files in `steam/config/lua` and manifests in `steamdepot/cache`.
+4. Use your favorite steamtool.
 5. Click Play.
 
 ## Linking the DLL for launchers or without loaders
@@ -167,6 +166,7 @@ The files provided in `extras` come from the following places
 - pe_reader > [LIEF](https://github.com/lief-project/LIEF)
 - steamclient_loader_x64.exe > [gbe_fork](https://github.com/Detanup01/gbe_fork/)
 - hypervisor-launcher.exe > [hypervisor-launcher](https://git.denuvosanctuary.com/andreh/hypervisor-launcher/)
+- rtcore driver used is from [drvloader](https://github.com/wesmar/KernelResearchKit/blob/main/drvloader/ICON/kvc.ico) > yes the ico is the driver don't ask me why.
 
 ### Inspiration(s)
 
