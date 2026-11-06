@@ -53,7 +53,7 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
     Register-ScheduledTask -TaskName $name -Force -Action $action -Principal $principal -Settings $settings
     ```
 2. dse can now skip prompts
-    > Note that dse will not create a task for you, nor try to bypass UAC if a if the task is not found dse_elevator will be ran.
+    > Note that dse will not create a task for you, nor try to bypass UAC. If the task is not found dse_elevator will be ran.
 
 ## Steam config setup (overlay + input)
 
