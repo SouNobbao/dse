@@ -50,6 +50,9 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
     coldloaderhooks=false
     steam_path=<YOUR_STEAM_PATH>
 
+    ; Forward emulator steam_api64.dll exports to the real steam_api64_o.dll next to it
+    steamApiForward=false
+
     ; Enable/disable logging output
     logging=false
 
@@ -84,6 +87,9 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
     coldloaderhooks=true
     steam_path=<YOUR_STEAM_PATH>
 
+    ; Forward emulator steam_api64.dll exports to the real steam_api64_o.dll next to it
+    steamApiForward=false
+
     ; Enable/disable logging output
     logging=true
 
@@ -110,6 +116,13 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
 3. Use [OpenSteamTool](https://github.com/OpenSteam001/OpenSteamTool).
 4. Use your favorite steamtool.
 5. Click Play.
+
+### Last scenario - not really tested
+Place steam_api64_o.dll near emulated steam_api64.dll used by the game, turn on 
+```ini
+; Forward emulator steam_api64.dll exports to the real steam_api64_o.dll next to it
+steamApiForward=true
+```
 
 ## Linking the DLL for launchers or without loaders
 
