@@ -1,6 +1,5 @@
 #include "patcher.h"
 
-#include "common.h"
 #include "config.h"
 #include "afterburner.h"
 #include "log.h"
@@ -49,10 +48,6 @@ bool IsRunningAsAdmin() {
 		FreeSid(adminGroup);
 	}
 	return isAdmin != FALSE;
-}
-
-void EnsurePatcherExtracted() {
-	// No-op: drvloader is integrated
 }
 
 bool IsDseEnabled(bool defaultVal) {

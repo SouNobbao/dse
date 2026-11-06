@@ -12,7 +12,6 @@ typedef bool(WINAPI *pCreateProcessW_t)(LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES,
 extern pCreateProcessW_t OriginalCreateProcessW;
 
 bool IsRunningAsAdmin();
-void EnsurePatcherExtracted();
 bool IsDseEnabled(bool defaultVal = true);
 void DisableDse();
 void EnableDse();
