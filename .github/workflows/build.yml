@@ -17,7 +17,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     - name: Setup utilities || Cache APT
       uses: awalsh128/cache-apt-pkgs-action@latest
@@ -85,7 +85,7 @@ jobs:
         7z a -t7z build/build.7z build/* -x!build/build.7z
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: dse-x64
         path: |
