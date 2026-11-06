@@ -5,5 +5,5 @@ Changes :
 - Adds g_CiOptions and .data probing patch from kvc
 
 Original Source Code : 
-- [wesmar/drvloader](https://github.com/wesmar/KernelResearchKit/)
+- [wesmar/KernelResearchKit/drvloader](https://github.com/wesmar/KernelResearchKit/)
 - [wesmar/kvc](https://github.com/wesmar/kvc/)
