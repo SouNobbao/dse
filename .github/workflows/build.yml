@@ -74,7 +74,7 @@ jobs:
         retention-days: 30
 
   release:
-    needs: [build, build_msvc]
+    needs: [build]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
 
@@ -85,12 +85,6 @@ jobs:
         name: dse-x64
         path: ./release
 
-    - name: Download MSVC artifacts
-      uses: actions/download-artifact@v8
-      with:
-        name: dse-x64-msvc
-        path: ./release
-
     - name: Normalize release artifacts
       if: always()
       run: |
@@ -98,7 +92,6 @@ jobs:
         cd release
         if [ -f build/dse.dll ]; then mv -f build/dse.dll . || true; fi
 
-        # Move other helper tools into release root (avoid overwriting dse dlls)
         shopt -s globstar || true
         for f in **/hypervisor-launcher.exe **/steamclient_loader_x64.exe **/build.7z **/pefile.exe **/pe_reader.exe **/sha256hashes.txt; do
           if [ -f "$f" ]; then
@@ -106,18 +99,6 @@ jobs:
           fi
         done
 
-        # Ensure MSVC zip is at release/dse_msvc.zip (take first found)
-        for z in **/dse_msvc.zip; do
-          if [ -f "$z" ]; then
-            mv -f "$z" dse_msvc.zip || true
-            break
-          fi
-        done
-
-        # Remove any stray MSVC dse.dll copies (keep the linux-provided root copy)
-        find . -type f -name 'dse.dll' -not -path './dse.dll' -delete || true
-
-        # Clean up nested empty release folders if any
         find . -type d -empty -not -path '.' -delete || true
 
     - name: Generate SHA-256 checksums
@@ -180,96 +161,5 @@ jobs:
           ./release/pefile.exe
           ./release/pe_reader.exe
           ./release/sha256hashes.txt
-          ./release/dse_msvc.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  build_msvc:
-    name: Build (MSVC)
-    runs-on: windows-2022
-    needs: build
-    
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v7
-
-    - name: Download Linux/MinGW artifacts for MSVC job
-      uses: actions/download-artifact@v8
-      with:
-        name: dse-x64
-        path: linux_artifacts
-
-    - name: Setup MSVC environment
-      uses: TheMrMilchmann/setup-msvc-dev@v4
-      with:
-        arch: x64
-
-    - name: Build with MSVC
-      shell: powershell
-      run: |
-        # Prepare bins dir
-        md bins -Force | Out-Null
-
-        # If linux/minGW artifacts provided an elevator, copy it into bins
-        if (Test-Path '.\linux_artifacts\bins\dse_elevator.exe') { copy .\linux_artifacts\bins\dse_elevator.exe .\bins\dse_elevator.exe }
-
-        # Build elevator.exe via cl only if not provided by linux artifacts
-        if (-not (Test-Path '.\bins\dse_elevator.exe')) {
-          cl /nologo /std:c++17 /O2 /W3 /MD /EHsc elevator.cpp /link /OUT:bins\dse_elevator.exe shlwapi.lib
-        }
-
-        # Replace placeholders
-        $xxd = Get-Command xxd -ErrorAction SilentlyContinue
-        function Get-Hex([string]$path){ if ($xxd) { $i = & xxd -i $path | Out-String; $m = [regex]::Match($i,'\{([\s\S]*)\}\s*;'); if ($m.Success){ return $m.Groups[1].Value } else { throw 'xxd parse failed' } } else { $b = [System.IO.File]::ReadAllBytes($path); return ($b | ForEach-Object { '0x' + $_.ToString('x2') }) -join ', ' } }
-        if (Test-Path '.\bins\dse_elevator.exe') { $el = Get-Hex '.\bins\dse_elevator.exe'; (Get-Content '.\elevator_bin.cpp' -Raw) -replace '%placeholder_el_bin%',$el | Set-Content '.\elevator_bin.cpp' -Encoding ASCII }
-
-        # Configure and build with NMake
-        cmake -S . -B build-msvc -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release
-        cmake --build build-msvc --config Release
-
-        # Copy outputs
-        md release -Force | Out-Null
-        copy build-msvc\dse.dll release\dse.dll
-        copy bins\dse_elevator.exe release\dse_elevator.exe
-
-        # Generate a self-signed PFX and sign DLLs before packaging
-        Write-Host "Generating self-signed PFX on runner"
-        $genOut = & powershell -NoProfile -ExecutionPolicy Bypass -File .\.github\scripts\generate_pfx.ps1 -EmitEnvToStdout
-        # parse output lines like SIGNING_PFX=... and SIGNING_PASSWORD=...
-        if ($genOut) {
-          $genOut -split "`n" | ForEach-Object {
-            $line = $_.Trim()
-            if ($line -match '^SIGNING_PFX=') { $val = $line -replace '^SIGNING_PFX=', ''; Set-Item -Path env:\SIGNING_PFX -Value $val }
-            if ($line -match '^SIGNING_PASSWORD=') { $val = $line -replace '^SIGNING_PASSWORD=', ''; Set-Item -Path env:\SIGNING_PASSWORD -Value $val }
-            if ($line -match '^PFX_PATH=') { $val = $line -replace '^PFX_PATH=', ''; Set-Item -Path env:\PFX_PATH -Value $val }
-          }
-        }
-
-        if ($env:SIGNING_PFX -and $env:SIGNING_PASSWORD) {
-          Write-Host "Signing artifacts with generated PFX"
-          $pfxOut = Join-Path $PWD 'release\codesign.pfx'
-          [System.IO.File]::WriteAllBytes($pfxOut, [System.Convert]::FromBase64String($env:SIGNING_PFX))
-          $sigtool = "signtool"
-          # Sign DLLs
-          if (Test-Path 'release\dse.dll') { & $sigtool sign /f $pfxOut /p $env:SIGNING_PASSWORD /tr http://timestamp.digicert.com /td sha256 /fd sha256 release\dse.dll }
-          Remove-Item $pfxOut -Force
-        } else {
-          Write-Host "Failed to generate signing secrets; skipping code signing"
-        }
-
-        # Create a zip that contains an _msvc folder with the MSVC outputs and the linux-built bins
-        $tmp = Join-Path $PWD 'msvc_pkg_tmp'
-        if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
-        New-Item -ItemType Directory -Path (Join-Path $tmp '_msvc') | Out-Null
-        copy release\dse.dll (Join-Path $tmp '_msvc\dse.dll')
-        $zipPath = Join-Path $PWD 'release\dse_msvc.zip'
-        if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-        Compress-Archive -Path (Join-Path $tmp '*') -DestinationPath $zipPath
-        Remove-Item -Recurse -Force $tmp
-
-    - name: Upload MSVC artifacts
-      uses: actions/upload-artifact@v7
-      with:
-        name: dse-x64-msvc
-        path: release/
-        retention-days: 30
