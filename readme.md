@@ -37,10 +37,23 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
 ## Running without showing the prompt
 1. DSE can now indentify if a game can have its UAC prompt skipped, create a task like this
     ```powershell
-    $exe = "C:\FullPathToExe"; 
-    $name = "dse_" + [IO.Path]::GetFileNameWithoutExtension($exe); Register-ScheduledTask -TaskName $name -Force -Action (New-ScheduledTaskAction -Execute $exe -WorkingDirectory (Split-Path $exe)) -Principal (New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -RunLevel Highest -LogonType Interactive) -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero))
+    $exe  = "C:\FullPathToExe"
+    $name = "dse_" + [IO.Path]::GetFileNameWithoutExtension($exe)
+
+    # Create a new task
+    $action    = New-ScheduledTaskAction -Execute $exe -WorkingDirectory (Split-Path $exe)
+    
+    # Setup at which level the task/executable should run
+    $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -RunLevel Highest -LogonType Interactive
+
+    # Configure the task settings
+    $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
+
+    # Register the task
+    Register-ScheduledTask -TaskName $name -Force -Action $action -Principal $principal -Settings $settings
     ```
 2. dse can now skip prompts
+    > Note that dse will not create a task for you, nor try to bypass UAC if a if the task is not found dse_elevator will be ran.
 
 ## Steam config setup (overlay + input)
 
