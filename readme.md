@@ -237,4 +237,5 @@ The files provided in `extras` come from the following places
 
 ### Inspiration(s)
 
-- [VXR/HV-PlugNPlay](https://codeberg.org/vrx/HV-PlugNPlay)
+- [VXR/HV-PlugNPlay](https://codeberg.org/vrx/HV-PlugNPlay) - checks and others needed.
+- [SOULX3X/HV-Launcher](https://codeberg.org/SOULX3X/HV-Launcher) - hv-admin auto escalation.
