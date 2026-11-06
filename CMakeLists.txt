@@ -1,11 +1,9 @@
 cmake_minimum_required(VERSION 3.15)
 project(dse_dll C CXX)
 
-# Only target MinGW toolchain when not building with MSVC
-if(NOT MSVC)
-    set(CMAKE_C_COMPILER_TARGET "x86_64-w64-mingw32")
-    set(CMAKE_CXX_COMPILER_TARGET "x86_64-w64-mingw32")
-endif()
+# MinGW/clang (llvm-mingw) cross toolchain
+set(CMAKE_C_COMPILER_TARGET "x86_64-w64-mingw32")
+set(CMAKE_CXX_COMPILER_TARGET "x86_64-w64-mingw32")
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -38,66 +36,31 @@ set(DRVLOADER_SOURCES
 
 add_library(dse SHARED ${SOURCES} ${DRVLOADER_SOURCES})
 
-# Ensure C sources are compiled as C when using MSVC
-if(MSVC)
-    set_source_files_properties(
-        minhook/src/buffer.c
-        minhook/src/hook.c
-        minhook/src/trampoline.c
-        minhook/src/hde/hde64.c
-        minhook/src/hde/hde32.c
-        PROPERTIES LANGUAGE C
-    )
+set(COMPILER_OPTIONS
+    -Oz
+    -Wno-deprecated
+    -ffunction-sections
+    -fdata-sections
+    -fvisibility=hidden
+    -fno-unwind-tables
+    -fno-asynchronous-unwind-tables
+    $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti>
+)
 
-    set(COMPILER_OPTIONS
-        /utf-8
-        /MP
-        /O2
-        /Ob3
-        /GL
-        /Gw
-        /GS-
-        /fp:fast
-        /MT
-        /W3
-        $<$<COMPILE_LANGUAGE:CXX>:/permissive->
-    )
-    
-    set(LINKER_OPTIONS
-        /LTCG
-        /OPT:REF
-        /OPT:ICF=3
-        /INCREMENTAL:NO
-        /DEBUG:NONE
-        /MERGE:.rdata=.text
-    )
-else()
-    set(COMPILER_OPTIONS
-        -Oz
-        -Wno-deprecated
-        -ffunction-sections
-        -fdata-sections
-        -fvisibility=hidden
-        -fno-unwind-tables
-        -fno-asynchronous-unwind-tables
-        $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti>
-    )
-
-    set(LINKER_OPTIONS
-        -Oz
-        -static
-        -mwindows
-        -municode
-        -fuse-ld=lld
-        -Wl,--gc-sections
-        -Wl,--icf=all
-        -Wl,--strip-all
-        -Wl,--build-id=none
-        -Wl,--as-needed
-        -Wl,--kill-at
-        -flto=thin
-    )
-endif()
+set(LINKER_OPTIONS
+    -Oz
+    -static
+    -mwindows
+    -municode
+    -fuse-ld=lld
+    -Wl,--gc-sections
+    -Wl,--icf=all
+    -Wl,--strip-all
+    -Wl,--build-id=none
+    -Wl,--as-needed
+    -Wl,--kill-at
+    -flto=thin
+)
 
 target_include_directories(dse PRIVATE minhook/include ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/drvloader)
 set_target_properties(dse PROPERTIES PREFIX "")
@@ -107,6 +70,17 @@ target_link_libraries(dse PRIVATE shlwapi dbghelp winhttp cabinet psapi version 
 target_compile_options(dse PRIVATE ${COMPILER_OPTIONS})
 target_link_options(dse PRIVATE ${LINKER_OPTIONS})
 
-if(MSVC)
-    target_compile_definitions(dse PRIVATE _M_X64 _AMD64_)
-endif()
+add_executable(dse_elevator WIN32 elevator.cpp)
+set_target_properties(dse_elevator PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/bins"
+    OUTPUT_NAME dse_elevator)
+target_compile_definitions(dse_elevator PRIVATE UNICODE _UNICODE)
+target_compile_options(dse_elevator PRIVATE -Oz -ffunction-sections -fdata-sections)
+target_link_options(dse_elevator PRIVATE
+    -Oz -static -municode -fuse-ld=lld
+    -Wl,--gc-sections -Wl,--strip-all -flto=thin)
+target_link_libraries(dse_elevator PRIVATE shell32 shlwapi)
+
+add_dependencies(dse dse_elevator)
+set_source_files_properties(dllmain.cpp PROPERTIES
+    OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/bins/dse_elevator.exe")

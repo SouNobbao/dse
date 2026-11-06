@@ -7,6 +7,12 @@
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "shlwapi.lib")
 
+extern "C" char *__cxa_demangle(const char *, char *, size_t *, int *status) {
+	if (status)
+		*status = -1;
+	return nullptr;
+}
+
 int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow) {
 	int argc = 0;
 	LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
