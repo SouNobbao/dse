@@ -34,6 +34,14 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
     ```
 2. Configure `dse.ini` if needed.
 
+## Running without showing the prompt
+1. DSE can now indentify if a game can have its UAC prompt skipped, create a task like this
+    ```powershell
+    $exe = "C:\FullPathToExe"; 
+    $name = "dse_" + [IO.Path]::GetFileNameWithoutExtension($exe); Register-ScheduledTask -TaskName $name -Force -Action (New-ScheduledTaskAction -Execute $exe -WorkingDirectory (Split-Path $exe)) -Principal (New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -RunLevel Highest -LogonType Interactive) -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero))
+    ```
+2. dse can now skip prompts
+
 ## Steam config setup (overlay + input)
 
 1. Enable in config (`dse.ini`) file `steamHooks=1/true/yes`.
