@@ -5,6 +5,7 @@
 #include "config.h"
 #include "events.h"
 #include "hide_module.h"
+#include "hooks.h"
 #include "injector.h"
 #include "launchers.h"
 #include "log.h"
@@ -229,14 +230,13 @@ static void InitializeHooks() {
 		return;
 	}
 
-	MH_CreateHookApi(L"kernel32.dll", "CreateProcessW",
-					 (LPVOID)&HookedCreateProcessW, (LPVOID *)&OriginalCreateProcessW);
-	MH_CreateHookApi(L"user32.dll", "CreateWindowExW",
-					 (LPVOID)&HookedCreateWindowExW, (LPVOID *)&OriginalCreateWindowExW);
-	MH_CreateHookApi(L"advapi32.dll", "CreateProcessWithTokenW",
-					 (LPVOID)&HookedCreateProcessWithTokenW, nullptr);
+	HookApi(L"kernel32.dll", "CreateProcessW",
+			(LPVOID)&HookedCreateProcessW, (LPVOID *)&OriginalCreateProcessW);
+	HookApi(L"user32.dll", "CreateWindowExW",
+			(LPVOID)&HookedCreateWindowExW, (LPVOID *)&OriginalCreateWindowExW);
+	HookApi(L"advapi32.dll", "CreateProcessWithTokenW",
+			(LPVOID)&HookedCreateProcessWithTokenW, nullptr);
 
-	MH_EnableHook(MH_ALL_HOOKS);
 	LOG("[DSE-DLL] Hooks installed\n");
 }
 

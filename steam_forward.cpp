@@ -1,65 +1,18 @@
 #pragma once
 #include "config.h"
 #include "log.h"
+#include "hooks.h"
 #include "minhook/include/MinHook.h"
 #include "peb_struct.h"
-#include "steam_forwarding.h"
 #include <shlwapi.h>
 #include <windows.h>
 
 // The emulator lives in steam_api64.dll; the real Valve DLL sits next to it as
 // steam_api64_o.dll. Same scheme as steamclient64: every emulator export is
 // forwarded to the real one, and the real module is hidden from module walks.
-// Reuses HookAllExports/HideLdrEntry from steam_coldclient_hooks.cpp.
+// Reuses HookAllExports from steam_coldclient_hooks.cpp.
 
 static volatile LONG s_api_forward_state = 0; // 0 = not started, 1 = in progress, 2 = ready
-
-// The EAT rewrite only reaches lookups made from now on. Modules that imported
-// the emulator statically were bound before we got here, so repoint their IATs
-// at the emulator's trampolines, which lead to the hooks or the real DLL.
-static int RebindImports(LPCSTR dllName, HMODULE hEmulator) {
-	PEB_CUSTOM *pPEB = (PEB_CUSTOM *)__readgsqword(0x60);
-	_LIST_ENTRY *head = &pPEB->Ldr->InLoadOrderModuleList;
-	int rebound = 0;
-
-	for (_LIST_ENTRY *p = head->Flink; p != head; p = p->Flink) {
-		auto *entry = (_LDR_DATA_TABLE_ENTRY_CUSTOM *)p; // InLoadOrderLinks is the first field
-		BYTE *base = (BYTE *)entry->DllBase;
-		if (!base || base == (BYTE *)hEmulator)
-			continue;
-
-		auto *nt = (PIMAGE_NT_HEADERS)(base + ((PIMAGE_DOS_HEADER)base)->e_lfanew);
-		auto &dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-		if (!dir.VirtualAddress)
-			continue;
-
-		for (auto *imp = (PIMAGE_IMPORT_DESCRIPTOR)(base + dir.VirtualAddress); imp->Name; imp++) {
-			// Without the name table there is nothing to resolve against the real DLL.
-			if (_stricmp((const char *)(base + imp->Name), dllName) != 0 || !imp->OriginalFirstThunk)
-				continue;
-
-			auto *names = (PIMAGE_THUNK_DATA)(base + imp->OriginalFirstThunk);
-			auto *iat = (PIMAGE_THUNK_DATA)(base + imp->FirstThunk);
-			for (; names->u1.AddressOfData; names++, iat++) {
-				// Ordinals are not guaranteed to match between emulator and real DLL.
-				if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal))
-					continue;
-				auto *byName = (PIMAGE_IMPORT_BY_NAME)(base + names->u1.AddressOfData);
-				void *target = (void *)GetProcAddress(hEmulator, byName->Name);
-				if (!target || (void *)iat->u1.Function == target)
-					continue;
-
-				DWORD oldProt;
-				if (!VirtualProtect(&iat->u1.Function, sizeof(iat->u1.Function), PAGE_READWRITE, &oldProt))
-					continue;
-				iat->u1.Function = (ULONG_PTR)target;
-				VirtualProtect(&iat->u1.Function, sizeof(iat->u1.Function), oldProt, &oldProt);
-				++rebound;
-			}
-		}
-	}
-	return rebound;
-}
 
 // rebindImports only when the emulator was loaded before us: on the LdrLoadDll
 // path it was just loaded, so nothing can have bound to it yet.
@@ -131,8 +84,7 @@ void InitSteamApiForward() {
 	}
 
 	void *pLdrLoadDll = (void *)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "LdrLoadDll");
-	if (pLdrLoadDll && MH_CreateHook(pLdrLoadDll, (void *)hkLdrLoadDll, (void **)&oLdrLoadDll) == MH_OK &&
-		MH_EnableHook(pLdrLoadDll) == MH_OK)
+	if (pLdrLoadDll && Hook(pLdrLoadDll, (void *)hkLdrLoadDll, (void **)&oLdrLoadDll))
 		LOG("[DSE-DLL] Hooked LdrLoadDll to intercept steam_api64.dll\n");
 	else
 		LOG("[DSE-DLL] Failed to hook LdrLoadDll for steam_api64 forwarding\n");

@@ -1,9 +1,9 @@
 #pragma once
 #include "config.h"
 #include "log.h"
+#include "hooks.h"
 #include "minhook/include/MinHook.h"
 #include "peb_struct.h"
-#include "steam_forwarding.h"
 #include <shlwapi.h>
 #include <strsafe.h>
 #include <windows.h>
@@ -15,31 +15,6 @@ static void HookInterface_ISteamClient(void *pInterface, const char *pszVersion)
 static void LoadSteamConfigFromDll(HMODULE hSteamApi);
 
 // Unlink a module from the PEB's loader lists so it stops showing up in module
-// walks. Called on the real client once its exports have been forwarded, so the
-// emulator stays the only steamclient64 anyone can find by name.
-static void HideLdrEntry(HMODULE hModule) {
-	PEB_CUSTOM *pPEB = (PEB_CUSTOM *)__readgsqword(0x60);
-
-	auto hide = [&](_LIST_ENTRY *head, size_t linkOffset) {
-		for (_LIST_ENTRY *p = head->Flink; p != head; p = p->Flink) {
-			auto *entry = (_LDR_DATA_TABLE_ENTRY_CUSTOM *)((BYTE *)p - linkOffset);
-			if (entry->DllBase == (PVOID)hModule) {
-				_LIST_ENTRY *links = (_LIST_ENTRY *)((BYTE *)entry + linkOffset);
-				links->Blink->Flink = links->Flink;
-				links->Flink->Blink = links->Blink;
-				return true;
-			}
-		}
-		return false;
-	};
-
-	hide(&pPEB->Ldr->InLoadOrderModuleList, offsetof(LDR_DATA_TABLE_ENTRY_CUSTOM, InLoadOrderLinks));
-	hide(&pPEB->Ldr->InMemoryOrderModuleList, offsetof(LDR_DATA_TABLE_ENTRY_CUSTOM, InMemoryOrderLinks));
-	hide(&pPEB->Ldr->InInitializationOrderModuleList, offsetof(LDR_DATA_TABLE_ENTRY_CUSTOM, InInitializationOrderLinks));
-
-	LOG("[DSE-DLL] Hid LDR entry for %p\n", hModule);
-}
-
 static HMODULE g_hEmulatorClient = nullptr;
 static HMODULE g_hRealSteamClient = nullptr;
 
@@ -55,37 +30,6 @@ static bool GetSteamInstallPath(WCHAR *out, DWORD maxChars) {
 		out[0])
 		return true;
 	return false;
-}
-
-static void *AllocateEatTrampolines(HMODULE hModule, size_t size, DWORD imageSize) {
-	uintptr_t baseAddr = (uintptr_t)hModule;
-	uintptr_t maxAddr = baseAddr + 0xFFFFFFFFull;
-
-	SYSTEM_INFO si;
-	GetSystemInfo(&si);
-	uintptr_t granularity = si.dwAllocationGranularity;
-	uintptr_t currentAddr = baseAddr + imageSize;
-	currentAddr = (currentAddr + granularity - 1) & ~(granularity - 1);
-
-	while (currentAddr >= baseAddr && currentAddr <= maxAddr) {
-		if (size > (size_t)(maxAddr - currentAddr + 1))
-			break;
-		void *p = VirtualAlloc((void *)currentAddr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-		if (p) {
-			uintptr_t pAddr = (uintptr_t)p;
-			uint64_t rva = (uint64_t)(pAddr - baseAddr);
-			if (pAddr >= baseAddr && rva <= 0xFFFFFFFFull &&
-				size <= (size_t)(0x100000000ull - rva)) {
-				return p;
-			}
-			VirtualFree(p, 0, MEM_RELEASE);
-		}
-		if (currentAddr > maxAddr - granularity)
-			break;
-		currentAddr += granularity;
-	}
-
-	return nullptr;
 }
 
 static bool CopyWidePath(WCHAR *dst, size_t dstChars, LPCWSTR src, const char *label) {
@@ -117,142 +61,6 @@ static bool GetConfiguredSteamDir(WCHAR *steamDir, size_t steamDirChars) {
 		if (*p == L'/')
 			*p = L'\\';
 	return true;
-}
-
-// One trampoline is 14 bytes:
-//
-//     FF 25 00 00 00 00  <8-byte absolute target>     jmp qword ptr [rip+0]
-//
-// The zero displacement is intentional: the 8-byte target that follows is the
-// absolute address, so the jump lands on it. 14 bytes keeps it 8-byte aligned,
-// which matters because the target is stored inline.
-static constexpr size_t kTrampolineSize = 14;
-
-// Point one export-table entry at a trampoline, and write the trampoline.
-//
-// Returns the new RVA for the entry, or 0 if the trampoline cannot be addressed
-// as an RVA of hSource. An export-table entry is a 32-bit RVA relative to the
-// module base, so the trampoline has to sit within 4GB above that base; that is
-// why they are allocated high rather than anywhere convenient.
-static DWORD SetExportToTrampoline(DWORD *entryRva, HMODULE hSource, BYTE *trampoline,
-								   void *target) {
-	const uintptr_t source = reinterpret_cast<uintptr_t>(hSource);
-	const uintptr_t address = reinterpret_cast<uintptr_t>(trampoline);
-	if (address < source)
-		return 0;
-
-	const uintptr_t delta = address - source;
-	// The whole trampoline must fit inside the remaining 32-bit RVA space, not
-	// just its first byte.
-	if (delta > 0xFFFFFFFFull || kTrampolineSize > 0x100000000ull - delta)
-		return 0;
-
-	trampoline[0] = 0xFF;
-	trampoline[1] = 0x25;
-	trampoline[2] = 0x00;
-	trampoline[3] = 0x00;
-	trampoline[4] = 0x00;
-	trampoline[5] = 0x00;
-	memcpy(trampoline + 6, &target, sizeof(target));
-
-	const DWORD newRva = static_cast<DWORD>(delta);
-	*entryRva = newRva;
-	return newRva;
-}
-
-// Rewrite every export of `hSource` to forward to the same-named export of
-// `hTarget`.
-//
-// Nothing of ours ends up reachable through the emulator: each entry points at a
-// trampoline whose target is the real client. Anything that cannot be forwarded
-// is left exactly as it was, and reported.
-//
-// Returns the number of exports forwarded.
-static int HookAllExports(HMODULE hSource, HMODULE hTarget) {
-	PIMAGE_DOS_HEADER dos = (PIMAGE_DOS_HEADER)hSource;
-	if (dos->e_magic != IMAGE_DOS_SIGNATURE)
-		return 0;
-
-	PIMAGE_NT_HEADERS nt = (PIMAGE_NT_HEADERS)((BYTE *)hSource + dos->e_lfanew);
-	if (nt->Signature != IMAGE_NT_SIGNATURE)
-		return 0;
-
-	auto &expEntry = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
-	if (!expEntry.VirtualAddress)
-		return 0;
-
-	auto *expDir = (PIMAGE_EXPORT_DIRECTORY)((BYTE *)hSource + expEntry.VirtualAddress);
-	DWORD *names = (DWORD *)((BYTE *)hSource + expDir->AddressOfNames);
-	WORD *ords = (WORD *)((BYTE *)hSource + expDir->AddressOfNameOrdinals);
-	DWORD *funcs = (DWORD *)((BYTE *)hSource + expDir->AddressOfFunctions);
-
-	WCHAR targetPath[MAX_PATH]{};
-	GetModuleFileNameW(hTarget, targetPath, MAX_PATH);
-	char targetName[MAX_PATH]{};
-	WideCharToMultiByte(CP_ACP, 0, PathFindFileNameW(targetPath), -1, targetName, MAX_PATH, nullptr, nullptr);
-
-	int forwarded = 0, skipped = 0, failed = 0;
-
-	const size_t trampolineBytes = expDir->NumberOfNames * kTrampolineSize;
-	BYTE *trampolineBase = (BYTE *)AllocateEatTrampolines(hSource, trampolineBytes,
-														  nt->OptionalHeader.SizeOfImage);
-	BYTE *trampoline = trampolineBase;
-	if (!trampoline) {
-		LOG("[DSE-DLL] Failed to allocate EAT trampolines above source module base!\n");
-		return 0;
-	}
-	LOG("[DSE-DLL] EAT trampolines allocated at %p (source=%p, rva=0x%llX)\n", trampoline,
-		hSource, (unsigned long long)((uintptr_t)trampoline - (uintptr_t)hSource));
-
-	DWORD oldProt;
-	if (!VirtualProtect(funcs, expDir->NumberOfFunctions * sizeof(DWORD), PAGE_READWRITE, &oldProt)) {
-		LOG("[DSE-DLL] VirtualProtect on EAT failed: %lu\n", GetLastError());
-		VirtualFree(trampolineBase, 0, MEM_RELEASE);
-		return 0;
-	}
-	for (DWORD i = 0; i < expDir->NumberOfNames; i++) {
-		const char *name = (const char *)((BYTE *)hSource + names[i]);
-
-		// Already a forwarder string (module.export), so it already resolves
-		// against whatever it names rather than to code in this image.
-		const DWORD rva = funcs[ords[i]];
-		if (rva >= expEntry.VirtualAddress && rva < expEntry.VirtualAddress + expEntry.Size)
-			continue;
-
-		// The real client is the only destination: forward to it, or leave the
-		// emulator's own entry in place. There is deliberately no hook here, so
-		// the game resolves every export straight to real steamclient64.
-		void *target = (void *)GetProcAddress(hTarget, name);
-		if (!target) {
-			LOG("[DSE-DLL] %s stays on the emulator: not exported by the real %s\n",
-				name, targetName);
-			++skipped;
-			continue;
-		}
-
-		if (!SetExportToTrampoline(&funcs[ords[i]], hSource, trampoline, target)) {
-			LOG("[DSE-DLL] Failed to forward export %s: trampoline %p is not encodable as an EAT RVA\n",
-				name, trampoline);
-			++failed;
-		} else {
-			++forwarded;
-		}
-
-		// Consumed either way: a failed slot still advanced, so each export gets
-		// its own trampoline and never shares one.
-		trampoline += kTrampolineSize;
-	}
-
-	VirtualProtect(funcs, expDir->NumberOfFunctions * sizeof(DWORD), oldProt, &oldProt);
-	DWORD trampOldProt = 0;
-	FlushInstructionCache(GetCurrentProcess(), trampolineBase, trampolineBytes);
-	if (!VirtualProtect(trampolineBase, trampolineBytes, PAGE_EXECUTE_READ, &trampOldProt)) {
-		LOG("[DSE-DLL] Failed to set EAT trampolines RX: %lu\n", GetLastError());
-	}
-
-	LOG("[DSE-DLL] Export forwarding: %d forwarded, %d left on the emulator, %d failed\n",
-		forwarded, skipped, failed);
-	return forwarded;
 }
 
 typedef HMODULE(WINAPI *fnLoadLibraryExW)(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags);
@@ -418,7 +226,6 @@ static void SetupSteamClientForwarding(HMODULE hEmulator) {
 
 		const int forwarded = HookAllExports(hEmulator, hReal);
 		if (forwarded > 0) {
-			MH_EnableHook(MH_ALL_HOOKS);
 			LOG("[DSE-DLL] %d emulator exports now forwarding to real %ls\n", forwarded,
 				kDllName);
 		} else {
@@ -511,8 +318,7 @@ void InitSteamColdHooks() {
 		pLoadLib = (void *)GetProcAddress(hKernel32, "LoadLibraryExW");
 
 	if (pLoadLib) {
-		MH_CreateHook(pLoadLib, (void *)hkLoadLibraryExW, (void **)&oLoadLibraryExW);
-		MH_EnableHook(pLoadLib);
+		Hook(pLoadLib, (void *)hkLoadLibraryExW, (void **)&oLoadLibraryExW);
 		LOG("[DSE-DLL] Hooked LoadLibraryExW to intercept steamclient64.dll\n");
 	}
 
@@ -523,8 +329,7 @@ void InitSteamColdHooks() {
 		pGetProcAddr = (void *)GetProcAddress(hKernel32, "GetProcAddress");
 
 	if (pGetProcAddr) {
-		MH_CreateHook(pGetProcAddr, (void *)hkGetProcAddress, (void **)&oGetProcAddress);
-		MH_EnableHook(pGetProcAddr);
+		Hook(pGetProcAddr, (void *)hkGetProcAddress, (void **)&oGetProcAddress);
 		LOG("[DSE-DLL] Hooked GetProcAddress for steamclient internal exports\n");
 	}
 
