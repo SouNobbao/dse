@@ -14,7 +14,7 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
 
 ## How to use
 
-1. Add the DLL to the load list (`xxxxex.ini`, `xxxowo.ini`) example setups.
+1. Add the DLL to the load list (`xxxxex.ini`, `xxxowo.ini`, `xxxxxact.json`) example setups.
     ### Example setups
     ```
     xxxex.ini
@@ -53,6 +53,9 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
     ; Forward emulator steam_api64.dll exports to the real steam_api64_o.dll next to it
     steamApiForward=false
 
+    ; Skip warning prompts and proceed automatically
+    ignoreWarnings=false
+
     ; Enable/disable logging output
     logging=false
 
@@ -90,8 +93,11 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
     ; Forward emulator steam_api64.dll exports to the real steam_api64_o.dll next to it
     steamApiForward=false
 
+    ; Skip warning prompts and proceed automatically
+    ignoreWarnings=false
+
     ; Enable/disable logging output
-    logging=true
+    logging=false
 
     ; Its dependent on toggleDse
     ; Problematic services to stop or delete (Format: ServiceName:ACTION)
@@ -116,12 +122,41 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
 3. Use your favorite steamtool.
 4. Click Play.
 
-### Last scenario - not really tested
-Place steam_api64_o.dll near emulated steam_api64.dll used by the game, turn on 
-```ini
-; Forward emulator steam_api64.dll exports to the real steam_api64_o.dll next to it
-steamApiForward=true
-```
+### Last scenario
+1. Place steam_api64_o.dll near emulated steam_api64.dll used by the game, turn on 
+    ```ini
+    [dse]
+    ; Automatically toggle DSE. If DSE was already disabled
+    ; patcher will not run.
+    toggleDse=true
+
+    ; Enable/disable Steam API hooks
+    steamHooks=true
+
+    ; Enable coldloader support (for games that need it)
+    coldloaderhooks=false
+    steam_path=<YOUR_STEAM_PATH>
+
+    ; Forward emulator steam_api64.dll exports to the real steam_api64_o.dll next to it
+    steamApiForward=true
+
+    ; Skip warning prompts and proceed automatically
+    ignoreWarnings=false
+
+    ; Enable/disable logging output
+    logging=false
+
+    ; Its dependent on toggleDse
+    ; Problematic services to stop or delete (Format: ServiceName:ACTION)
+    ; STOP - just stops the service, and relaunches once game ends
+    ; DELETE - deletes the service, and does not relaunch
+    problematic_services=vgk:STOP, vgc:STOP, FACEIT:DELETE
+
+    ; Problematic tasks to kill (comma separated executable names, these are not relaunched)
+    problematic_tasks=vgtray.exe,
+    ```
+2. Use your favorite steamtool.
+3. Click Play.
 
 ## Linking the DLL for launchers or without loaders
 
