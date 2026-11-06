@@ -113,9 +113,8 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
     > [!NOTE]
     > This creates a hardlink (copy if it fails) of `steamclient64.dll` named `steamclient64_valve.dll` in your steam folder
 
-3. Use [OpenSteamTool](https://github.com/OpenSteam001/OpenSteamTool).
-4. Use your favorite steamtool.
-5. Click Play.
+3. Use your favorite steamtool.
+4. Click Play.
 
 ### Last scenario - not really tested
 Place steam_api64_o.dll near emulated steam_api64.dll used by the game, turn on 
