@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Windows.h>
+#include <windows.h>
 #include <dbghelp.h>
 #include <winhttp.h>
 #include <cstdint>
