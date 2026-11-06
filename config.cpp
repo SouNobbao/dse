@@ -11,7 +11,7 @@
 #pragma comment(lib, "shlwapi.lib")
 
 // default config order
-DseConfig g_config = {true, false, false, false, false, nullptr, false, nullptr, nullptr};
+DseConfig g_config = {true, false, false, false, false, nullptr, false, false, nullptr, nullptr};
 
 static bool ReadIniBool(LPCWSTR section, LPCWSTR key, bool defaultVal,
 						LPCWSTR iniPath) {
@@ -71,6 +71,7 @@ void LoadDseConfig(HMODULE hModule) {
 						   L"; Path to original Steam client for coldloaderhooks\nsteam_path=\n"
 						   L"; Forward emulator steam_api64.dll exports to steam_api64_o.dll\nsteamApiForward=false\n"
 						   L"; Enable/disable logging output\nlogging=false\n"
+						   L"; Skip warning prompts and proceed automatically\nignoreWarnings=false\n"
 						   L"; Disable some Steam API hooks when using Reloaded-II\n"
 						   L"reloaded=false\n\n"
 						   L"; Problematic services to stop or delete (Format: ServiceName:ACTION)\n"
@@ -97,6 +98,7 @@ void LoadDseConfig(HMODULE hModule) {
 
 	g_config.reloaded = ReadIniBool(L"dse", L"reloaded", false, iniPath);
 	g_config.logging = ReadIniBool(L"dse", L"logging", false, iniPath);
+	g_config.ignoreWarnings = ReadIniBool(L"dse", L"ignoreWarnings", false, iniPath);
 
 	Vector *rawServices = vector_create(sizeof(String *));
 	ReadIniStringList(L"dse", L"problematic_services", iniPath, rawServices);

@@ -24,6 +24,7 @@ struct DseConfig {
 	String *steam_path;
 
 	bool logging;
+	bool ignoreWarnings;
 	Vector *problematicServices;
 	Vector *problematicTasks;
 };

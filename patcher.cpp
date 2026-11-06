@@ -1,6 +1,7 @@
 #include "patcher.h"
 
 #include "common.h"
+#include "config.h"
 #include "afterburner.h"
 #include "log.h"
 
@@ -97,7 +98,7 @@ void DisableDse() {
 	}
 	LOG("[DSE-DLL] Safe method failed, offering standard fallback\n");
 
-	int choice = MessageBoxW(nullptr,
+	int choice = g_config.ignoreWarnings ? IDOK : MessageBoxW(nullptr,
 		L"PDB-based DSE bypass failed.\n\n"
 		L"Switch to standard method (g_CiOptions)?\n"
 		L"This modifies kernel code integrity flags directly.",
