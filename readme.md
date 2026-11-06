@@ -217,7 +217,6 @@ You, as the user, you're responsible for any misuse of this software. The author
 
 Before submitting any issues please make sure following:
 - you are sure that the dll was loaded
-- there is not any issue after trying [drvloader](https://github.com/SouNobbao/drvloader-fork/releases/latest) manually
 - where this dll was used, and how it was loaded (e.g. from a launcher, from another dll or linked)
 - you are sure that you don't have external programs interfering with dse.dll (e.g. MSI Afterburner, Rivatuner, Anti-Cheat Systems), and if they were, you are sure that `dse.dll` closed the interfering programs.
 - you are sure that `dse.ini` is correctly configured, for your use case.
