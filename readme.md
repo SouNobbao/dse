@@ -2,9 +2,9 @@
 
 ## What dse does
 
-The DLL extracts a [temporary executable](https://codeberg.org/sounobbao/dse/src/branch/master/elevator.cpp) that's compiled on the action build of this repo.
+The DLL extracts a [temporary executable](https://github.com/SouNobbao/dse/blob/master/elevator.cpp) that's compiled on the action build of this repo.
 
-Upon opening the game, it checks if you're running under the test-signed setup or you alterady have Driver Signature Enforncement previously off. [checks are here](https://codeberg.org/sounobbao/dse/src/branch/master/checks.cpp)
+Upon opening the game, it checks if you're running under the test-signed setup or you alterady have Driver Signature Enforncement previously off. [checks are here](https://github.com/SouNobbao/dse/blob/master/checks.cpp)
 
 Other related checks are HVCI/VBS, this tool won't turn off those, make sure you've disabled them before running.
 
