@@ -38,6 +38,11 @@ jobs:
         tar -xf llvm-mingw.tar.xz
         rm llvm-mingw.tar.xz
 
+    - name: Compress DLLs with UPX
+      run: |
+        set -euo pipefail
+        upx --ultra-brute build/*.dll
+
     - name: Add llvm-mingw to PATH
       run: echo "$PWD/llvm-mingw-20251216-ucrt-ubuntu-22.04-x86_64/bin" >> $GITHUB_PATH
 
