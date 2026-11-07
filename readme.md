@@ -54,8 +54,9 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
     ```
 2. dse can now skip prompts
     > Note that dse will not create a task for you, nor try to bypass UAC. If the task is not found dse_elevator will be ran.
-    
-    > Note that its mandatory using runlevel highest, working directory and exe, else dse will ignore the task 
+
+> [!WARNING]    
+> that its mandatory using runlevel highest, working directory and exe, else dse will ignore the task 
 
 ## Steam config setup (overlay + input)
 
@@ -139,8 +140,8 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
     1=coldclient\dse.dll
     ```
 
-    > [!NOTE]
-    > This creates a hardlink (copy if it fails) of `steamclient64.dll` named `steamclient64_valve.dll` in your steam folder
+> [!NOTE]
+> This creates a hardlink (copy if it fails) of `steamclient64.dll` named `steamclient64_valve.dll` in your steam folder
 
 3. Use your favorite steamtool.
 4. Click Play.
