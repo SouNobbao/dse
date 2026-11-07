@@ -65,6 +65,7 @@ static bool RunPreRegisteredElevationTask(LPCWSTR selfExePath) {
 	IExecAction *exec = nullptr;
 	BSTR bstr = nullptr;
 	bool ran = false;
+	WCHAR exeDir[MAX_PATH]{};
 
 	VARIANT v;
 	VariantInit(&v);
@@ -122,6 +123,23 @@ static bool RunPreRegisteredElevationTask(LPCWSTR selfExePath) {
 	if (_wcsicmp(bstr, selfExePath) != 0) {
 		LOG("[DSE-DLL] Elevation task path mismatch ('%ls' != '%ls'), ignoring.\n", bstr, selfExePath);
 		goto done;
+	}
+	SysFreeString(bstr);
+	bstr = nullptr;
+
+	lstrcpynW(exeDir, selfExePath, MAX_PATH);
+	PathRemoveFileSpecW(exeDir);
+	PathRemoveBackslashW(exeDir);
+	if (FAILED(exec->get_WorkingDirectory(&bstr)) || !bstr)
+		goto done;
+	{
+		WCHAR taskDir[MAX_PATH]{};
+		lstrcpynW(taskDir, bstr, MAX_PATH);
+		PathRemoveBackslashW(taskDir);
+		if (_wcsicmp(taskDir, exeDir) != 0) {
+			LOG("[DSE-DLL] Elevation task working dir mismatch ('%ls' != '%ls'), ignoring.\n", taskDir, exeDir);
+			goto done;
+		}
 	}
 	SysFreeString(bstr);
 	bstr = nullptr;
