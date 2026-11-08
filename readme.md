@@ -6,9 +6,11 @@ The DLL extracts a [temporary executable](https://github.com/SouNobbao/dse/blob/
 
 Upon opening the game, it checks if you're running under the test-signed setup or you alterady have Driver Signature Enforncement previously off. [checks are here](https://github.com/SouNobbao/dse/blob/master/checks.cpp)
 
-Other related checks are HVCI/VBS, this tool won't turn off those, make sure you've disabled them before running.
+Other related checks are HVCI/VBS, this tool won't turn off those, make sure you've disabled them before running (`xxx.cmd`).
+Also holds from running if there are previous instances of dse.dll running
+Nor help in AVX-512 checking code. (either way not my place to do these checks.).
 
-Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that the program is opened before turning dse back on.
+Upon opening it disables dse and hooks over to `CreateWindowExW`, ensuring that the program is opened before turning dse back on.
 
 `CreateProcess`/`CreateProcessWithTokenW` are only hooked to load dse.dll for that game in case of a launcher.
 
@@ -34,7 +36,7 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
     ```
 2. Configure `dse.ini` if needed.
 
-## Running without showing the prompt
+## Running without showing the UAC prompt
 1. DSE can now indentify if a game can have its UAC prompt skipped, create a task like this
     ```powershell
     $exe  = "C:\FullPathToExe"
@@ -53,10 +55,10 @@ Upon opening it disables dse and hooks over to CreateWindowExW, ensuring that th
     Register-ScheduledTask -TaskName $name -Force -Action $action -Principal $principal -Settings $settings
     ```
 2. dse can now skip prompts
-    > Note that dse will not create a task for you, nor try to bypass UAC. If the task is not found dse_elevator will be ran.
+    > Note that dse will not create a task for you, nor try to bypass UAC. If the task is not found `dse_elevator` will be ran.
 
 > [!WARNING]    
-> Its mandatory using runlevel highest, setting the correct working directory and exe, else dse will ignore the task 
+> Its mandatory to create the task using run level highest, setting the correct working directory and exe, else dse will ignore the task.
 
 ## Steam config setup (overlay + input)
 
@@ -224,7 +226,7 @@ Before submitting any issues please make sure following:
 - you are sure that you don't have external programs interfering with dse.dll (e.g. MSI Afterburner, Rivatuner, Anti-Cheat Systems), and if they were, you are sure that `dse.dll` closed the interfering programs.
 - you are sure that `dse.ini` is correctly configured, for your use case.
 - you are sure that there is not any issue with the game or launcher (e.g. corrupt game files, outdated launcher)
-- you are sure that the launcher is not renamed and corresponds to [launchers.h](https://codeberg.org/sounobbao/dse/src/branch/master/launchers.h#L17-L22)
+- you are sure that the launcher is not renamed and corresponds to [launchers.h](https://github.com/SouNobbao/dse/blob/master/launchers.h#L17-L22)
 - you've read the readme
 
 If all above are true, and you still have issues, please submit an issue with all the information requested above and make sure that `logging=true` is enabled on `dse.ini` and you attach the log file
