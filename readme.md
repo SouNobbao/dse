@@ -186,6 +186,12 @@ Upon opening it disables dse and hooks over to `CreateWindowExW`, ensuring that 
 2. Use your favorite steamtool.
 3. Click Play.
 
+## Recommended services and executables to stop to avoid BSOD's
+```ini
+problematic_services=vgk:STOP, vgc:STOP, FACEIT:DELETE
+problematic_tasks=vgtray.exe, RobloxPlayerBeta.exe
+```
+
 ## Linking the DLL for launchers or without loaders
 
 ### CFF Explorer (GUI)
@@ -241,6 +247,7 @@ The files provided in `extras` come from the following places
 - steamclient_loader_x64.exe > [gbe_fork](https://github.com/Detanup01/gbe_fork/)
 - hypervisor-launcher.exe > [hypervisor-launcher](https://git.denuvosanctuary.com/andreh/hypervisor-launcher/)
 - rtcore driver used is from [drvloader](https://github.com/wesmar/KernelResearchKit/blob/main/drvloader/ICON/kvc.ico) > yes the ico is the driver don't ask me why.
+    - why rtcore64 driver is used, well is signed and allows r/w on kernel memory, used to change dse status on windows.
 
 ### Inspiration(s)
 
