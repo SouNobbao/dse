@@ -6,8 +6,10 @@ The DLL extracts a [temporary executable](https://github.com/SouNobbao/dse/blob/
 
 Upon opening the game, it checks if you're running under the test-signed setup or you alterady have Driver Signature Enforncement previously off. [checks are here](https://github.com/SouNobbao/dse/blob/master/checks.cpp)
 
-Other related checks are HVCI/VBS, this tool won't turn off those, make sure you've disabled them before running (`xxx.cmd`).
+Other related checks are HVCI/VBS, this tool won't turn off those, make sure you've disabled them before by running  `xxx.cmd` or by doing manually and rebooting with dse turned on.
+
 Also holds from running if there are previous instances of dse.dll running
+
 Nor help in AVX-512 checking code. (either way not my place to do these checks.).
 
 Upon opening it disables dse and hooks over to `CreateWindowExW`, ensuring that the program is opened before turning dse back on.
