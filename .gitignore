@@ -5,3 +5,5 @@ build-*/
 .clangd
 logs/
 bins/
+phnt/
+steamworkssdk/
