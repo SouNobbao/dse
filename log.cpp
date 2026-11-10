@@ -61,7 +61,7 @@ void Log(const char *fmt, ...) {
 	s_hasLast = true;
 	strcpy_s(s_lastLine, sizeof(s_lastLine), buffer);
 
-	printf("%s", buffer);
+	printf("[dse-dll] %s", buffer);
 	AppendLogLine(buffer);
 }
 
@@ -74,5 +74,5 @@ void SetupLogConsole(HMODULE hModule) {
 	freopen_s(&dummy, "CONOUT$", "w", stdout);
 	freopen_s(&dummy, "CONOUT$", "w", stderr);
 	freopen_s(&dummy, "CONIN$", "r", stdin);
-	Log("[DSE-DLL] Console initialized.\n");
+	Log("Console initialized.\n");
 }

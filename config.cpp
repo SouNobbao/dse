@@ -3,14 +3,11 @@
 #include "common.h"
 
 #include <cstdio>
+#include <filesystem>
 #include <wchar.h>
 #include <wctype.h>
-#include <shlwapi.h>
 
-#pragma comment(lib, "shlwapi.lib")
-
-DseConfig g_config;  // defaults from in-class initializers
-
+DseConfig g_config;
 static std::wstring TrimWs(const wchar_t *s, const wchar_t *end) {
 	while (s < end && iswspace((wint_t)*s))
 		++s;
@@ -46,12 +43,12 @@ static void ReadIniStringList(LPCWSTR section, LPCWSTR key, LPCWSTR iniPath, std
 
 static void GetDseIniPath(HMODULE hModule, WCHAR *outPath, DWORD maxLen) {
 	outPath[0] = L'\0';
-	WCHAR dllDir[MAX_PATH]{};
-	if (!GetModuleFileNameW(hModule, dllDir, MAX_PATH))
+	WCHAR dllPath[MAX_PATH]{};
+	if (!GetModuleFileNameW(hModule, dllPath, MAX_PATH))
 		return;
-	PathRemoveFileSpecW(dllDir);
-	lstrcpynW(outPath, dllDir, maxLen);
-	PathAppendW(outPath, kDseIniName);
+	std::filesystem::path ini =
+		std::filesystem::path(dllPath).parent_path() / kDseIniName;
+	lstrcpynW(outPath, ini.c_str(), (int)maxLen);
 }
 
 void LoadDseConfig(HMODULE hModule) {

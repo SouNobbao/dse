@@ -1,10 +1,4 @@
 #pragma once
-// Central hooking toolkit: every low-level hook mechanism lives here so the
-// steam_*.cpp files carry only their detours and dispatch. Covers MinHook
-// install wrappers, safe cross-module memory access, vtable swaps (generic +
-// ISteamClient), EAT export forwarding, and IAT rebinding. This header is
-// textually included into the single dllmain translation unit, so everything
-// stays 'static' (one TU) and must appear before its first use.
 
 #include "log.h"
 #include "minhook/include/MinHook.h"
@@ -20,11 +14,11 @@
 static bool HookApi(LPCWSTR mod, LPCSTR name, LPVOID detour, LPVOID *orig) {
 	LPVOID target = nullptr;
 	if (MH_CreateHookApiEx(mod, name, detour, orig, &target) != MH_OK) {
-		LOG("[DSE-DLL] Hook create failed: %ls!%hs\n", mod, name);
+		LOG("Hook create failed: %ls!%hs\n", mod, name);
 		return false;
 	}
 	if (MH_EnableHook(target) != MH_OK) {
-		LOG("[DSE-DLL] Hook enable failed: %ls!%hs\n", mod, name);
+		LOG("Hook enable failed: %ls!%hs\n", mod, name);
 		return false;
 	}
 	return true;
@@ -32,11 +26,11 @@ static bool HookApi(LPCWSTR mod, LPCSTR name, LPVOID detour, LPVOID *orig) {
 
 static bool Hook(LPVOID target, LPVOID detour, LPVOID *orig) {
 	if (MH_CreateHook(target, detour, orig) != MH_OK) {
-		LOG("[DSE-DLL] Hook create failed at %p\n", target);
+		LOG("Hook create failed at %p\n", target);
 		return false;
 	}
 	if (MH_EnableHook(target) != MH_OK) {
-		LOG("[DSE-DLL] Hook enable failed at %p\n", target);
+		LOG("Hook enable failed at %p\n", target);
 		return false;
 	}
 	return true;
@@ -182,7 +176,7 @@ static GenericVTableSwap *BeginGenericVTableSwapLocked(void *pInterface, size_t 
 	}
 	if (!slot) {
 		ReleaseSRWLockExclusive(&g_vtableSwapLock);
-		LOG("[DSE-DLL] No free vtable swap slots for object %p\n", pInterface);
+		LOG("No free vtable swap slots for object %p\n", pInterface);
 		return nullptr;
 	}
 
@@ -227,14 +221,14 @@ static bool PublishGenericVTableSwapLocked(GenericVTableSwap *swap) {
 
 	DWORD oldProtect = 0;
 	if (!VirtualProtect(swap->object, sizeof(void *), PAGE_READWRITE, &oldProtect)) {
-		LOG("[DSE-DLL] Failed to swap vtable for object %p: %lu\n", swap->object, GetLastError());
+		LOG("Failed to swap vtable for object %p: %lu\n", swap->object, GetLastError());
 		AbortGenericVTableSwapLocked(swap);
 		return false;
 	}
 	MemoryBarrier();
 	*(void ***)swap->object = swap->fakeVTable;
 	VirtualProtect(swap->object, sizeof(void *), oldProtect, &oldProtect);
-	LOG("[DSE-DLL] VTable swapped object at %p (real=%p fake=%p)\n",
+	LOG("VTable swapped object at %p (real=%p fake=%p)\n",
 		swap->object, swap->realVTable, swap->fakeVTable);
 	ReleaseSRWLockExclusive(&g_vtableSwapLock);
 	return true;
@@ -370,7 +364,7 @@ static ClientVTableSwap *BeginClientVTableSwapLocked(void *pInterface, size_t nu
 		}
 	}
 	if (!slot) {
-		LOG("[DSE-DLL] No free ISteamClient vtable swap slots for object %p\n", pInterface);
+		LOG("No free ISteamClient vtable swap slots for object %p\n", pInterface);
 		ReleaseSRWLockExclusive(&g_vtableSwapLock);
 		return nullptr;
 	}
@@ -418,7 +412,7 @@ static bool PublishClientVTableSwapLocked(ClientVTableSwap *swap) {
 
 	DWORD oldProtect = 0;
 	if (!VirtualProtect(swap->object, sizeof(void *), PAGE_READWRITE, &oldProtect)) {
-		LOG("[DSE-DLL] Failed to swap ISteamClient vtable for object %p: %lu\n",
+		LOG("Failed to swap ISteamClient vtable for object %p: %lu\n",
 			swap->object, GetLastError());
 		AbortClientVTableSwapLocked(swap);
 		return false;
@@ -426,7 +420,7 @@ static bool PublishClientVTableSwapLocked(ClientVTableSwap *swap) {
 	MemoryBarrier();
 	*(void ***)swap->object = swap->fakeVTable;
 	VirtualProtect(swap->object, sizeof(void *), oldProtect, &oldProtect);
-	LOG("[DSE-DLL] ISteamClient vtable swapped object at %p (real=%p fake=%p)\n",
+	LOG("ISteamClient vtable swapped object at %p (real=%p fake=%p)\n",
 		swap->object, swap->realVTable, swap->fakeVTable);
 	ReleaseSRWLockExclusive(&g_vtableSwapLock);
 	return true;
@@ -545,15 +539,15 @@ static int HookAllExports(HMODULE hSource, HMODULE hTarget) {
 														  nt->OptionalHeader.SizeOfImage);
 	BYTE *trampoline = trampolineBase;
 	if (!trampoline) {
-		LOG("[DSE-DLL] Failed to allocate EAT trampolines above source module base!\n");
+		LOG("Failed to allocate EAT trampolines above source module base!\n");
 		return 0;
 	}
-	LOG("[DSE-DLL] EAT trampolines allocated at %p (source=%p, rva=0x%llX)\n", trampoline,
+	LOG("EAT trampolines allocated at %p (source=%p, rva=0x%llX)\n", trampoline,
 		hSource, (unsigned long long)((uintptr_t)trampoline - (uintptr_t)hSource));
 
 	DWORD oldProt;
 	if (!VirtualProtect(funcs, expDir->NumberOfFunctions * sizeof(DWORD), PAGE_READWRITE, &oldProt)) {
-		LOG("[DSE-DLL] VirtualProtect on EAT failed: %lu\n", GetLastError());
+		LOG("VirtualProtect on EAT failed: %lu\n", GetLastError());
 		VirtualFree(trampolineBase, 0, MEM_RELEASE);
 		return 0;
 	}
@@ -571,14 +565,14 @@ static int HookAllExports(HMODULE hSource, HMODULE hTarget) {
 		// the game resolves every export straight to real steamclient64.
 		void *target = (void *)GetProcAddress(hTarget, name);
 		if (!target) {
-			LOG("[DSE-DLL] %s stays on the emulator: not exported by the real %s\n",
+			LOG("%s stays on the emulator: not exported by the real %s\n",
 				name, targetName);
 			++skipped;
 			continue;
 		}
 
 		if (!SetExportToTrampoline(&funcs[ords[i]], hSource, trampoline, target)) {
-			LOG("[DSE-DLL] Failed to forward export %s: trampoline %p is not encodable as an EAT RVA\n",
+			LOG("Failed to forward export %s: trampoline %p is not encodable as an EAT RVA\n",
 				name, trampoline);
 			++failed;
 		} else {
@@ -594,10 +588,10 @@ static int HookAllExports(HMODULE hSource, HMODULE hTarget) {
 	DWORD trampOldProt = 0;
 	FlushInstructionCache(GetCurrentProcess(), trampolineBase, trampolineBytes);
 	if (!VirtualProtect(trampolineBase, trampolineBytes, PAGE_EXECUTE_READ, &trampOldProt)) {
-		LOG("[DSE-DLL] Failed to set EAT trampolines RX: %lu\n", GetLastError());
+		LOG("Failed to set EAT trampolines RX: %lu\n", GetLastError());
 	}
 
-	LOG("[DSE-DLL] Export forwarding: %d forwarded, %d left on the emulator, %d failed\n",
+	LOG("Export forwarding: %d forwarded, %d left on the emulator, %d failed\n",
 		forwarded, skipped, failed);
 	return forwarded;
 }

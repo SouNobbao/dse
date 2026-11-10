@@ -1,10 +1,10 @@
 #include "checks.h"
+#include "common.h"
 #include "config.h"
 #include "log.h"
 #define WIN32_LEAN_AND_MEAN
 
 #include "windows.h"
-#include <cwchar>
 #include <shlwapi.h>
 #include <tlhelp32.h>
 
@@ -88,7 +88,7 @@ void SystemChecks() {
 	bool hvciEnabled = IsHvciEnabled();
 	bool vbsEnabled = IsVbsEnabled();
 
-	LOG("[DSE-DLL] hvciEnabled: %d, vbsEnabled: %d\n", hvciEnabled, vbsEnabled);
+	LOG("hvciEnabled: %d, vbsEnabled: %d\n", hvciEnabled, vbsEnabled);
 
 	if (hvciEnabled || vbsEnabled) {
 		MessageBoxW(0, L"You have vbs and hvci enabled, please disable it!\n", L"Error", MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
@@ -99,7 +99,7 @@ void SystemChecks() {
 void ManageProblematicServices() {
 	SC_HANDLE hSCM = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_ALL_ACCESS);
 	if (!hSCM) {
-		LOG("[DSE-DLL] OpenSCManager failed: %lu\n", GetLastError());
+		LOG("OpenSCManager failed: %lu\n", GetLastError());
 		return;
 	}
 
@@ -110,14 +110,14 @@ void ManageProblematicServices() {
 			if (svc.action == ServiceActionType::STOP) {
 				SERVICE_STATUS status;
 				ControlService(hService, SERVICE_CONTROL_STOP, &status);
-				LOG("[DSE-DLL] Stopped service %ls\n", namew);
+				LOG("Stopped service %ls\n", namew);
 			} else if (svc.action == ServiceActionType::DELETE_SVC) {
 				DeleteService(hService);
-				LOG("[DSE-DLL] Deleted service %ls\n", namew);
+				LOG("Deleted service %ls\n", namew);
 			}
 			CloseServiceHandle(hService);
 		} else {
-			LOG("[DSE-DLL] Could not open service %ls (err %lu)\n", namew, GetLastError());
+			LOG("Could not open service %ls (err %lu)\n", namew, GetLastError());
 		}
 	}
 	CloseServiceHandle(hSCM);
@@ -137,12 +137,12 @@ void RestoreProblematicServices() {
 			if (!StartServiceW(hService, 0, nullptr)) {
 				DWORD err = GetLastError();
 				if (err != ERROR_SERVICE_ALREADY_RUNNING) {
-					LOG("[DSE-DLL] Failed to start service %ls (err %lu)\n", namew, err);
+					LOG("Failed to start service %ls (err %lu)\n", namew, err);
 				} else {
-					LOG("[DSE-DLL] Service %ls was already running (skipping)\n", namew);
+					LOG("Service %ls was already running (skipping)\n", namew);
 				}
 			} else {
-				LOG("[DSE-DLL] Restored (started) service %ls\n", namew);
+				LOG("Restored (started) service %ls\n", namew);
 			}
 			CloseServiceHandle(hService);
 		}
@@ -167,7 +167,7 @@ static void KillProcessTreeByName(const wchar_t *name) {
 				if (hProc) {
 					TerminateProcess(hProc, 0);
 					CloseHandle(hProc);
-					LOG("[DSE-DLL] Killed task %ls (PID: %lu)\n", name, entry.th32ProcessID);
+					LOG("Killed task %ls (PID: %lu)\n", name, entry.th32ProcessID);
 				}
 			}
 		} while (Process32NextW(snapshot, &entry));
@@ -183,14 +183,13 @@ void ManageProblematicTasks() {
 void WaitForWatchdogToExit() {
 	HANDLE hMutex = OpenMutexW(SYNCHRONIZE, FALSE, L"Local\\DseDll_WatchdogAlive");
 	if (hMutex) {
-		LOG("[DSE-DLL] Watchdog mutex found, waiting...\n");
+		LOG("Watchdog mutex found, waiting...\n");
 		WaitForSingleObject(hMutex, INFINITE);
 		CloseHandle(hMutex);
-		LOG("[DSE-DLL] Watchdog finished.\n");
+		LOG("Watchdog finished.\n");
 		return;
 	}
 
-	extern HMODULE g_hModule;
 	WCHAR ourDllName[MAX_PATH];
 	if (!GetModuleFileNameW(g_hModule, ourDllName, MAX_PATH))
 		return;
@@ -213,7 +212,7 @@ void WaitForWatchdogToExit() {
 								do {
 									if (lstrcmpiW(modEntry.szExePath, ourDllName) == 0) {
 										found = true;
-										LOG("[DSE-DLL] Found watchdog process (PID %lu) via module, waiting...\n", entry.th32ProcessID);
+										LOG("Found watchdog process (PID %lu) via module, waiting...\n", entry.th32ProcessID);
 										HANDLE hWait = OpenProcess(SYNCHRONIZE, FALSE, entry.th32ProcessID);
 										if (hWait) {
 											WaitForSingleObject(hWait, INFINITE);

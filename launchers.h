@@ -53,7 +53,7 @@ static bool DetectLauncherTarget(WCHAR *targetExe, DWORD maxLen) {
 		PathAppendW(iniPath, info->iniFile);
 
 		if (GetFileAttributesW(iniPath) == INVALID_FILE_ATTRIBUTES) {
-			LOG("[DSE-DLL] INI not found: %ls\n", iniPath);
+			LOG("INI not found: %ls\n", iniPath);
 			continue;
 		}
 
@@ -62,22 +62,22 @@ static bool DetectLauncherTarget(WCHAR *targetExe, DWORD maxLen) {
 								 targetBuf, MAX_PATH, iniPath);
 
 		if (!targetBuf[0]) {
-			LOG("[DSE-DLL] INI key [%ls]/%ls is empty, trying next\n",
+			LOG("INI key [%ls]/%ls is empty, trying next\n",
 				info->iniSection, info->iniKey);
 			continue;
 		}
 
 		LPCWSTR targetName = PathFindFileNameW(targetBuf);
 		lstrcpynW(targetExe, targetName, maxLen);
-		LOG("[DSE-DLL] Launcher target: %ls\n", targetExe);
+		LOG("Launcher target: %ls\n", targetExe);
 		return true;
 	}
 
 	if (!foundAny) {
-		LOG("[DSE-DLL] Process '%ls' is not a known launcher\n", exeName);
+		LOG("Process '%ls' is not a known launcher\n", exeName);
 		return false;
 	}
 
-	LOG("[DSE-DLL] Process '%ls' is a known launcher but target could not be determined\n", exeName);
+	LOG("Process '%ls' is a known launcher but target could not be determined\n", exeName);
 	return true;
 }

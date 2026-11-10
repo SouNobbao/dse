@@ -30,7 +30,7 @@ static bool EnsureLoaderInitialized() {
 	if (g_loaderInitialized) return true;
 	EnsureResourceSet();
 	if (!g_loader.Initialize()) {
-		LOG("[DSE-DLL] DrvLoader initialization failed (PDB unavailable?)\n");
+		LOG("DrvLoader initialization failed (PDB unavailable?)\n");
 		return false;
 	}
 	g_loaderInitialized = true;
@@ -68,7 +68,7 @@ bool IsDseEnabled(bool defaultVal) {
 	}
 
 	bool disabled = ConfigManager::IsPatchedFromRegistry();
-	LOG("[DSE-DLL] DSE status: %s\n", disabled ? "DISABLED" : "ENABLED");
+	LOG("DSE status: %s\n", disabled ? "DISABLED" : "ENABLED");
 
 	if (afterburnerKilledByUs) {
 		bool oldState = WasAfterburnerRunning();
@@ -83,15 +83,14 @@ bool IsDseEnabled(bool defaultVal) {
 void DisableDse() {
 	KillAfterBurner();
 	if (!IsRunningAsAdmin()) {
-		LOG("[DSE-DLL] Skipping DSE disable because process is not elevated\n");
+		LOG("Skipping DSE disable because process is not elevated\n");
 		return;
 	}
 
-	// Try Safe method first (PDB + SeCiCallbacks)
 	if (EnsureLoaderInitialized() && g_loader.BypassDSE()) {
 		return;
 	}
-	LOG("[DSE-DLL] Safe method failed, offering standard fallback\n");
+	LOG("Safe method failed, offering standard fallback\n");
 
 	int choice = g_config.ignoreWarnings ? IDOK : MessageBoxW(nullptr,
 		L"PDB-based DSE bypass failed.\n\n"
@@ -100,20 +99,20 @@ void DisableDse() {
 		L"Warning", MB_OKCANCEL | MB_ICONWARNING | MB_SYSTEMMODAL);
 
 	if (choice != IDOK) {
-		LOG("[DSE-DLL] User cancelled standard fallback\n");
+		LOG("User cancelled standard fallback\n");
 		return;
 	}
 
 	EnsureResourceSet();
 	if (!g_loader.DisableDSEStandard()) {
-		LOG("[DSE-DLL] Standard method also failed\n");
+		LOG("Standard method also failed\n");
 	}
 }
 
 void EnableDse() {
 	KillAfterBurner();
 	if (!IsRunningAsAdmin()) {
-		LOG("[DSE-DLL] Skipping DSE enable because process is not elevated\n");
+		LOG("Skipping DSE enable because process is not elevated\n");
 		if (WasAfterburnerRunning()) StartAfterburner();
 		return;
 	}
@@ -126,18 +125,14 @@ void EnableDse() {
 			if (WasAfterburnerRunning()) StartAfterburner();
 			return;
 		}
-		LOG("[DSE-DLL] Safe restore failed, trying standard restore\n");
+		LOG("Safe restore failed, trying standard restore\n");
 	}
 
 	// Standard method restore (or safe restore failed)
 	EnsureResourceSet();
 	if (!g_loader.RestoreDSEStandard()) {
-		LOG("[DSE-DLL] Standard restore failed\n");
+		LOG("Standard restore failed\n");
 	}
 
 	if (WasAfterburnerRunning()) StartAfterburner();
-}
-
-void DeletePatcherFile() {
-	// No-op: driver cleanup handled internally by DrvLoader
 }

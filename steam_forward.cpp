@@ -2,52 +2,47 @@
 #include "config.h"
 #include "log.h"
 #include "hooks.h"
-#include "minhook/include/MinHook.h"
-#include "peb_struct.h"
-#include <shlwapi.h>
+#include "hide_module.h"
+#include <filesystem>
 #include <windows.h>
 
-// The emulator lives in steam_api64.dll; the real Valve DLL sits next to it as
-// steam_api64_o.dll. Same scheme as steamclient64: every emulator export is
-// forwarded to the real one, and the real module is hidden from module walks.
-// Reuses HookAllExports from steam_coldclient_hooks.cpp.
+static void HookSteamAPI(HMODULE hSteamApi);
 
 static volatile LONG s_api_forward_state = 0; // 0 = not started, 1 = in progress, 2 = ready
 
-// rebindImports only when the emulator was loaded before us: on the LdrLoadDll
-// path it was just loaded, so nothing can have bound to it yet.
 static void SetupSteamApiForwarding(HMODULE hEmulator, bool rebindImports) {
 	if (!hEmulator || InterlockedCompareExchange(&s_api_forward_state, 1, 0) != 0)
 		return;
 
-	WCHAR realPath[MAX_PATH]{};
-	GetModuleFileNameW(hEmulator, realPath, MAX_PATH);
-	LOG("[DSE-DLL] steam_api64.dll emulator at %p: %ls\n", hEmulator, realPath);
-	PathRemoveFileSpecW(realPath);
-	if (!PathAppendW(realPath, L"steam_api64_o.dll") ||
-		GetFileAttributesW(realPath) == INVALID_FILE_ATTRIBUTES) {
-		LOG("[DSE-DLL] steam_api64_o.dll not found next to the emulator: %ls\n", realPath);
+	WCHAR emuPath[MAX_PATH]{};
+	GetModuleFileNameW(hEmulator, emuPath, MAX_PATH);
+	LOG("steam_api64.dll emulator at %p: %ls\n", hEmulator, emuPath);
+
+	std::error_code ec;
+	const std::filesystem::path realPath =
+		std::filesystem::path(emuPath).parent_path() / L"steam_api64_o.dll";
+	if (!std::filesystem::exists(realPath, ec)) {
+		LOG("steam_api64_o.dll not found next to the emulator: %ls\n",
+			realPath.c_str());
 		InterlockedExchange(&s_api_forward_state, 0);
 		return;
 	}
 
-	HMODULE hReal = LoadLibraryExW(realPath, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+	HMODULE hReal = LoadLibraryExW(realPath.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
 	if (!hReal) {
-		LOG("[DSE-DLL] Failed to load %ls: %lu\n", realPath, GetLastError());
+		LOG("Failed to load %ls: %lu\n", realPath.c_str(), GetLastError());
 		InterlockedExchange(&s_api_forward_state, 0);
 		return;
 	}
-	LOG("[DSE-DLL] Real steam_api64 loaded at %p from %ls\n", hReal, realPath);
+	LOG("Real steam_api64 loaded at %p from %ls\n", hReal, realPath.c_str());
 
 	const int forwarded = HookAllExports(hEmulator, hReal);
 
-	// Hooks retarget the emulator's trampolines, so they go in before the IATs
-	// are pointed at those trampolines.
 	if (forwarded > 0 && g_config.steamHooks)
 		HookSteamAPI(hEmulator);
 
 	const int rebound = rebindImports ? RebindImports("steam_api64.dll", hEmulator) : 0;
-	LOG("[DSE-DLL] steam_api64: %d exports forwarded, %d IAT entries rebound\n", forwarded, rebound);
+	LOG("steam_api64: %d exports forwarded, %d IAT entries rebound\n", forwarded, rebound);
 
 	HideLdrEntry(hReal);
 	InterlockedExchange(&s_api_forward_state, forwarded > 0 ? 2 : 0);
@@ -56,11 +51,10 @@ static void SetupSteamApiForwarding(HMODULE hEmulator, bool rebindImports) {
 static bool IsSteamApi64Module(HMODULE hModule) {
 	WCHAR path[MAX_PATH]{};
 	return GetModuleFileNameW(hModule, path, MAX_PATH) &&
-		   _wcsicmp(PathFindFileNameW(path), L"steam_api64.dll") == 0;
+		   _wcsicmp(std::filesystem::path(path).filename().c_str(),
+					L"steam_api64.dll") == 0;
 }
 
-// Hooked at LdrLoadDll so it never collides with the LoadLibrary* detours in
-// steam_hooks.cpp / steam_coldclient_hooks.cpp. Data-file loads never get here.
 typedef NTSTATUS(NTAPI *fnLdrLoadDll)(PWSTR, PULONG, PVOID, PVOID *);
 static fnLdrLoadDll oLdrLoadDll = nullptr;
 
@@ -77,7 +71,7 @@ static NTSTATUS NTAPI hkLdrLoadDll(PWSTR searchPath, PULONG characteristics, PVO
 void InitSteamApiForward() {
 	HMODULE hExisting = GetModuleHandleW(L"steam_api64.dll");
 	if (hExisting) {
-		LOG("[DSE-DLL] steam_api64.dll already in memory at %p - setting up forwarding\n", hExisting);
+		LOG("steam_api64.dll already in memory at %p - setting up forwarding\n", hExisting);
 		SetupSteamApiForwarding(hExisting, true);
 		if (s_api_forward_state == 2)
 			return;
@@ -85,7 +79,7 @@ void InitSteamApiForward() {
 
 	void *pLdrLoadDll = (void *)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "LdrLoadDll");
 	if (pLdrLoadDll && Hook(pLdrLoadDll, (void *)hkLdrLoadDll, (void **)&oLdrLoadDll))
-		LOG("[DSE-DLL] Hooked LdrLoadDll to intercept steam_api64.dll\n");
+		LOG("Hooked LdrLoadDll to intercept steam_api64.dll\n");
 	else
-		LOG("[DSE-DLL] Failed to hook LdrLoadDll for steam_api64 forwarding\n");
+		LOG("Failed to hook LdrLoadDll for steam_api64 forwarding\n");
 }

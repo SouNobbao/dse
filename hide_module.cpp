@@ -45,7 +45,7 @@ void HideLdrEntry(HMODULE hModule) {
 	UnlinkModule(&self->InInitializationOrderLinks);
 	UnlinkModule(&self->HashLinks);
 
-	LOG("[DSE-DLL] Hid LDR entry for %p\n", hModule);
+	LOG("Hid LDR entry for %p\n", hModule);
 }
 
 int HideModule() {
@@ -53,7 +53,7 @@ int HideModule() {
 	GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
 					   (LPCWSTR)&HideModule, &hModule);
 	if (!hModule) {
-		LOG("[DSE-DLL] GetModuleHandleExW failed!\n");
+		LOG("GetModuleHandleExW failed!\n");
 		return -1;
 	}
 	HideLdrEntry(hModule);

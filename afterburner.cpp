@@ -5,10 +5,8 @@
 
 #include "windows.h"
 #include <cwchar>
-#include <shlwapi.h>
+#include <filesystem>
 #include <tlhelp32.h>
-
-#pragma comment(lib, "shlwapi.lib")
 
 static WCHAR g_AfterburnerLoc[MAX_PATH] = {0};
 static HANDLE g_AfterburnerProcess = NULL;
@@ -26,7 +24,9 @@ void GetAfterburnerLocation() {
 		DWORD size = sizeof(g_AfterburnerLoc);
 		if (RegQueryValueExW(hKey, L"InstallPath", nullptr, nullptr,
 							 (LPBYTE)g_AfterburnerLoc, &size) == ERROR_SUCCESS) {
-			lstrcatW(g_AfterburnerLoc, L"\\MSIAfterburner.exe");
+			lstrcpynW(g_AfterburnerLoc,
+					  (std::filesystem::path(g_AfterburnerLoc) / L"MSIAfterburner.exe").c_str(),
+					  MAX_PATH);
 		}
 		RegCloseKey(hKey);
 	}
@@ -50,14 +50,14 @@ bool IsAfterburnerRunning() {
 				g_AfterburnerProcess =
 					OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, FALSE, entry.th32ProcessID);
 				if (g_AfterburnerProcess) {
-					LOG("[DSE-DLL] Found Afterburner, PID=%lu\n", entry.th32ProcessID);
+					LOG("Found Afterburner, PID=%lu\n", entry.th32ProcessID);
 					if (g_AfterburnerLoc[0] == L'\0') {
 						DWORD size = MAX_PATH;
 						if (QueryFullProcessImageNameW(g_AfterburnerProcess, 0, g_AfterburnerLoc, &size))
-							LOG("[DSE-DLL] Resolved Afterburner path from process: %ls\n", g_AfterburnerLoc);
+							LOG("Resolved Afterburner path from process: %ls\n", g_AfterburnerLoc);
 					}
 				} else {
-					LOG("[DSE-DLL] Found Afterburner, PID=%lu, but failed to open process.\n",
+					LOG("Found Afterburner, PID=%lu, but failed to open process.\n",
 						entry.th32ProcessID);
 				}
 				found = g_AfterburnerProcess != NULL;
@@ -80,7 +80,7 @@ void SetAfterburnerRunningState(bool state) {
 static void KillProcessTree(DWORD pid) {
 	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 	if (snapshot == INVALID_HANDLE_VALUE) {
-		LOG("[DSE-DLL] KillProcessTree: CreateToolhelp32Snapshot failed for PID %lu\n", pid);
+		LOG("KillProcessTree: CreateToolhelp32Snapshot failed for PID %lu\n", pid);
 		return;
 	}
 
@@ -90,7 +90,7 @@ static void KillProcessTree(DWORD pid) {
 	if (Process32FirstW(snapshot, &entry)) {
 		do {
 			if (entry.th32ParentProcessID == pid) {
-				LOG("[DSE-DLL] KillProcessTree: Found child PID %lu (Parent: %lu, Exe: %ls), killing its tree...\n",
+				LOG("KillProcessTree: Found child PID %lu (Parent: %lu, Exe: %ls), killing its tree...\n",
 					entry.th32ProcessID, pid, entry.szExeFile);
 				KillProcessTree(entry.th32ProcessID);
 			}
@@ -100,11 +100,11 @@ static void KillProcessTree(DWORD pid) {
 
 	HANDLE hProc = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
 	if (hProc) {
-		LOG("[DSE-DLL] KillProcessTree: Terminating PID %lu\n", pid);
+		LOG("KillProcessTree: Terminating PID %lu\n", pid);
 		TerminateProcess(hProc, 0);
 		CloseHandle(hProc);
 	} else {
-		LOG("[DSE-DLL] KillProcessTree: Failed to open PID %lu for termination\n", pid);
+		LOG("KillProcessTree: Failed to open PID %lu for termination\n", pid);
 	}
 }
 
@@ -123,7 +123,7 @@ void KillAfterBurner() {
 			g_AfterburnerPID = 0;
 		}
 
-		LOG("[DSE-DLL] Afterburner and its children killed\n");
+		LOG("Afterburner and its children killed\n");
 	}
 }
 
@@ -132,7 +132,7 @@ void StartAfterburner() {
 		return;
 
 	if (!WasAfterburnerEventSet()) {
-		LOG("[DSE-DLL] Skipping Afterburner start because it was not running before.\n");
+		LOG("Skipping Afterburner start because it was not running before.\n");
 		return;
 	}
 
@@ -142,22 +142,19 @@ void StartAfterburner() {
 		STARTUPINFOW si = {sizeof(si)};
 		PROCESS_INFORMATION pi = {};
 
-		WCHAR workDir[MAX_PATH];
-		lstrcpyW(workDir, g_AfterburnerLoc);
-		PathRemoveFileSpecW(workDir);
+		const std::filesystem::path exe(g_AfterburnerLoc);
 
-		WCHAR cmdLine[MAX_PATH + 2];
-		wsprintfW(cmdLine, L"\"%s\"", g_AfterburnerLoc);
+		std::wstring cmdLine = L"\"" + exe.wstring() + L"\"";
 
-		if (!CreateProcessW(nullptr, cmdLine, nullptr, nullptr, FALSE,
-							0, nullptr, workDir, &si, &pi)) {
-			LOG("[DSE-DLL] Failed to start Afterburner, error: %lu\n", GetLastError());
+		if (!CreateProcessW(nullptr, cmdLine.data(), nullptr, nullptr, FALSE,
+							0, nullptr, exe.parent_path().c_str(), &si, &pi)) {
+			LOG("Failed to start Afterburner, error: %lu\n", GetLastError());
 		} else {
-			LOG("[DSE-DLL] Afterburner started\n");
+			LOG("Afterburner started\n");
 			CloseHandle(pi.hThread);
 			CloseHandle(pi.hProcess);
 		}
 	} else {
-		LOG("[DSE-DLL] Afterburner not found\n");
+		LOG("Afterburner not found\n");
 	}
 }

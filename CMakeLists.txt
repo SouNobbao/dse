@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.15)
 project(dse_dll C CXX)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # MinGW/clang (llvm-mingw) cross toolchain
 set(CMAKE_C_COMPILER_TARGET "x86_64-w64-mingw32")
 set(CMAKE_CXX_COMPILER_TARGET "x86_64-w64-mingw32")
@@ -11,7 +13,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(SOURCES
     config.cpp
     checks.cpp
+    dse_hooks.cpp
     dllmain.cpp
+    elevation.cpp
     events.cpp
     injector.cpp
     patcher.cpp

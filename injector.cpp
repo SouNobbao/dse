@@ -11,7 +11,7 @@ bool InjectDll(HANDLE hProcess, LPCWSTR dllPath) {
 
 	if (!WriteProcessMemory(hProcess, remoteMem, dllPath, pathLen, nullptr)) {
 		VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
-		LOG("[DSE-DLL] InjectDll: WriteProcessMemory failed (%lu)\n",
+		LOG("InjectDll: WriteProcessMemory failed (%lu)\n",
 			GetLastError());
 		return false;
 	}
@@ -20,7 +20,7 @@ bool InjectDll(HANDLE hProcess, LPCWSTR dllPath) {
 	auto pLLW = (LPTHREAD_START_ROUTINE)GetProcAddress(hK32, "LoadLibraryW");
 	if (!pLLW) {
 		VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
-		LOG("[DSE-DLL] InjectDll: LoadLibraryW not found (%lu)\n", GetLastError());
+		LOG("InjectDll: LoadLibraryW not found (%lu)\n", GetLastError());
 		return false;
 	}
 
@@ -30,11 +30,11 @@ bool InjectDll(HANDLE hProcess, LPCWSTR dllPath) {
 		WaitForSingleObject(hThread, INFINITE);
 		CloseHandle(hThread);
 		VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
-		LOG("[DSE-DLL] DLL injected OK.\n");
+		LOG("DLL injected OK.\n");
 		return true;
 	}
 
 	VirtualFreeEx(hProcess, remoteMem, 0, MEM_RELEASE);
-	LOG("[DSE-DLL] InjectDll: CreateRemoteThread failed (%lu)\n", GetLastError());
+	LOG("InjectDll: CreateRemoteThread failed (%lu)\n", GetLastError());
 	return false;
 }

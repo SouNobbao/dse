@@ -1,94 +1,100 @@
 #include "events.h"
-#include "log.h"
 
-static HANDLE g_hOffFromStart = nullptr;
-static HANDLE g_hToggled = nullptr;
-static HANDLE g_hAfterburner = nullptr;
+#include <windows.h>
 
-static const LPCWSTR kOffFromStartEventName = L"Local\\DseDll_OffFromStart";
-static const LPCWSTR kToggledEventName = L"Local\\DseDll_Toggled";
-static const LPCWSTR kAfterburnerEventName = L"Local\\DseDll_Afterburner";
+namespace {
 
-bool CheckAndSetDseOffFromStart() {
-	HANDLE hEvent = OpenEventW(EVENT_ALL_ACCESS, FALSE, kOffFromStartEventName);
-	if (hEvent) {
-		g_hOffFromStart = hEvent;
-		return true;
+constexpr LPCWSTR kOffFromStartEventName = L"Local\\DseDll_OffFromStart";
+constexpr LPCWSTR kToggledEventName      = L"Local\\DseDll_Toggled";
+constexpr LPCWSTR kAfterburnerEventName  = L"Local\\DseDll_Afterburner";
+
+HANDLE g_hOffFromStart = nullptr;
+HANDLE g_hToggled = nullptr;
+HANDLE g_hAfterburner = nullptr;
+
+HANDLE EnsureEvent(LPCWSTR name, bool initiallySignaled = false) {
+	HANDLE h = OpenEventW(EVENT_ALL_ACCESS, FALSE, name);
+	if (h)
+		return h;
+
+	return CreateEventW(nullptr, TRUE,
+						initiallySignaled ? TRUE : FALSE, name);
+}
+
+void CloseEvent(HANDLE& h) {
+	if (h) {
+		CloseHandle(h);
+		h = nullptr;
 	}
-	return false;
+}
+
+}
+
+// Dse events
+bool CheckAndSetDseOffFromStart() {
+	g_hOffFromStart = EnsureEvent(kOffFromStartEventName);
+	return g_hOffFromStart != nullptr;
 }
 
 void SetDseOffFromStart() {
-	if (!g_hOffFromStart) {
-		g_hOffFromStart =
-			CreateEventW(nullptr, TRUE, FALSE, kOffFromStartEventName);
-	}
+	if (!g_hOffFromStart)
+		g_hOffFromStart = EnsureEvent(kOffFromStartEventName,true);
+	else
+		SetEvent(g_hOffFromStart);
 }
 
 bool CheckAndSetDseToggled() {
-	HANDLE hEvent = OpenEventW(EVENT_ALL_ACCESS, FALSE, kToggledEventName);
-	if (hEvent) {
-		g_hToggled = hEvent;
-		return true;
-	}
-	return false;
+	g_hToggled = EnsureEvent(kToggledEventName);
+	return g_hToggled != nullptr;
 }
 
 void SetDseToggled() {
-	if (!g_hToggled) {
-		g_hToggled = CreateEventW(nullptr, TRUE, FALSE, kToggledEventName);
-	}
+	if (!g_hToggled)
+		g_hToggled = EnsureEvent(kToggledEventName,true);
+	else
+		SetEvent(g_hToggled);
 }
 
-void CloseGameEvents() {
-	if (g_hOffFromStart) {
-		CloseHandle(g_hOffFromStart);
-		g_hOffFromStart = nullptr;
-	}
-	if (g_hToggled) {
-		CloseHandle(g_hToggled);
-		g_hToggled = nullptr;
-	}
-}
-
-void CloseDseEvents() {
-	CloseGameEvents();
-	if (g_hAfterburner) {
-		CloseHandle(g_hAfterburner);
-		g_hAfterburner = nullptr;
-	}
-}
-
+// Afterburner events
 bool CheckAndSetAfterburnerEvent() {
-	HANDLE hEvent = OpenEventW(EVENT_ALL_ACCESS, FALSE, kAfterburnerEventName);
-	if (hEvent) {
-		g_hAfterburner = hEvent;
-		return true;
-	}
-	return false;
+	g_hAfterburner = EnsureEvent(kAfterburnerEventName);
+	return g_hAfterburner != nullptr;
 }
 
 void SetAfterburnerEvent() {
-	if (!g_hAfterburner) {
-		g_hAfterburner = CreateEventW(nullptr, TRUE, FALSE, kAfterburnerEventName);
-	}
+	if (!g_hAfterburner)
+		g_hAfterburner = EnsureEvent(kAfterburnerEventName, true);
+	else
+		SetEvent(g_hAfterburner);
 }
 
 bool WasAfterburnerEventSet() {
 	return g_hAfterburner != nullptr;
 }
 
+// Lifetime / queries
+void CloseGameEvents() {
+	CloseEvent(g_hOffFromStart);
+	CloseEvent(g_hToggled);
+}
+
+void CloseDseEvents() {
+	CloseGameEvents();
+	CloseEvent(g_hAfterburner);
+}
+
 bool IsOtherGameRunning() {
-	HANDLE hToggled = OpenEventW(EVENT_ALL_ACCESS, FALSE, kToggledEventName);
+	HANDLE hToggled = OpenEventW(SYNCHRONIZE, FALSE, kToggledEventName);
 	if (hToggled) {
 		CloseHandle(hToggled);
 		return true;
 	}
-	HANDLE hOffFromStart =
-		OpenEventW(EVENT_ALL_ACCESS, FALSE, kOffFromStartEventName);
-	if (hOffFromStart) {
-		CloseHandle(hOffFromStart);
+
+	HANDLE hOff = OpenEventW(SYNCHRONIZE, FALSE, kOffFromStartEventName);
+	if (hOff) {
+		CloseHandle(hOff);
 		return true;
 	}
+
 	return false;
 }
