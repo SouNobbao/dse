@@ -25,22 +25,31 @@ void InitLogPath(HMODULE hModule) {
 	lstrcpynW(g_logPath, path, MAX_PATH);
 }
 
+static HANDLE g_logFile = INVALID_HANDLE_VALUE;
 static void AppendLogLine(const char *line) {
 	if (!line || !line[0])
 		return;
 	if (g_logPath[0] == L'\0')
 		return;
 
-	HANDLE hFile = CreateFileW(g_logPath, FILE_APPEND_DATA,
-							   FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
-							   OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-	if (hFile == INVALID_HANDLE_VALUE)
-		return;
+	if (g_logFile == INVALID_HANDLE_VALUE) {
+		g_logFile = CreateFileW(g_logPath, FILE_APPEND_DATA,
+								FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+								OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (g_logFile == INVALID_HANDLE_VALUE)
+			return;
+	}
 
 	DWORD bytes = static_cast<DWORD>(strlen(line));
 	DWORD written = 0;
-	WriteFile(hFile, line, bytes, &written, nullptr);
-	CloseHandle(hFile);
+	WriteFile(g_logFile, line, bytes, &written, nullptr);
+}
+
+void CloseLog() {
+	if (g_logFile != INVALID_HANDLE_VALUE) {
+		CloseHandle(g_logFile);
+		g_logFile = INVALID_HANDLE_VALUE;
+	}
 }
 
 void Log(const char *fmt, ...) {

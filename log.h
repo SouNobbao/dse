@@ -8,6 +8,7 @@ extern bool g_loggingEnabled;
 void InitLogPath(HMODULE hModule);
 void Log(const char *fmt, ...);
 void SetupLogConsole(HMODULE hModule);
+void CloseLog();
 
 #define LOG(fmt, ...)                \
 	do {                             \

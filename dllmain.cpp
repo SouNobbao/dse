@@ -155,6 +155,7 @@ static void OnProcessDetach() {
 	LOG("Uninitializing MinHook...\n");
 	MH_Uninitialize();
 	LOG("Detached!\n");
+	CloseLog();
 }
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,

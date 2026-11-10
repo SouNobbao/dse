@@ -109,14 +109,11 @@ static bool PrepareRealClientAlias(const std::filesystem::path &steamDir,
 		return true;
 	}
 
-	std::filesystem::create_hard_link(realPath, aliasPath, ec);
-	if (ec) {
+	if (!CreateHardLinkW(aliasPath.c_str(), realPath.c_str(), nullptr)) {
 		LOG("Failed to create hard link for real Steam DLL: %lu\n",
-			(unsigned long)ec.value());
-		if (!std::filesystem::copy_file(realPath, aliasPath,
-										std::filesystem::copy_options::overwrite_existing,
-										ec)) {
-			LOG("Fallback copy also failed: %lu\n", (unsigned long)ec.value());
+			GetLastError());
+		if (!CopyFileW(realPath.c_str(), aliasPath.c_str(), FALSE)) {
+			LOG("Fallback copy also failed: %lu\n", GetLastError());
 			return false;
 		}
 	}

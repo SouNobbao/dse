@@ -167,12 +167,10 @@ static void LoadSteamConfigFromDll(HMODULE hSteamApi) {
 	} else if (foundInSettings) {
 		LOG("steam_appid.txt found in steam_settings, AppId = %u\n",
 			appId);
-		if (!std::filesystem::copy_file(settingsAppIdPath, rootAppIdPath,
-										std::filesystem::copy_options::overwrite_existing,
-										ec)) {
+		if (!CopyFileW(settingsAppIdPath.c_str(), rootAppIdPath.c_str(), FALSE)) {
 			LOG("WARNING: Failed to copy steam_appid.txt to root (err "
 				"%lu)\n",
-				(unsigned long)ec.value());
+				GetLastError());
 		} else {
 			LOG("Copied steam_appid.txt to game root\n");
 		}
