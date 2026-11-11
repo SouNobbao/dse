@@ -40,9 +40,14 @@ static void AppendLogLine(const char *line) {
 			return;
 	}
 
-	DWORD bytes = static_cast<DWORD>(strlen(line));
+	SYSTEMTIME t;
+	GetLocalTime(&t);
+	char header[32];
+	int headerLen = snprintf(header, sizeof(header), "[dse-dll] [%02d:%02d:%02d] ",
+							 t.wHour, t.wMinute, t.wSecond);
 	DWORD written = 0;
-	WriteFile(g_logFile, line, bytes, &written, nullptr);
+	WriteFile(g_logFile, header, static_cast<DWORD>(headerLen), &written, nullptr);
+	WriteFile(g_logFile, line, static_cast<DWORD>(strlen(line)), &written, nullptr);
 }
 
 void CloseLog() {
