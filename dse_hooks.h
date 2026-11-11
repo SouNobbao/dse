@@ -5,7 +5,6 @@
 extern decltype(&CreateWindowExW) OriginalCreateWindowExW;
 extern decltype(&CreateProcessW) OriginalCreateProcessW;
 
-
 BOOL WINAPI HookedCreateProcessW(
 	LPCWSTR lpApplicationName, LPWSTR lpCommandLine,
 	LPSECURITY_ATTRIBUTES lpProcessAttributes,

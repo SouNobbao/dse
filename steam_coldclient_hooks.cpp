@@ -6,12 +6,15 @@
 #include "minhook/include/MinHook.h"
 #include "peb_struct.h"
 #include <filesystem>
+#include <libloaderapi.h>
+#include <minwindef.h>
 #include <shlwapi.h>
 #include <windows.h>
 
+decltype(&GetProcAddress) oGetProcAddress = nullptr;
+decltype(&LoadLibraryExW) oLoadLibraryExW = nullptr;
+
 // Interface hooking lives in steam_hooks.cpp. This file forwards the emulator's
-// exports to the real client and hooks the real client's interfaces at load
-// time; it keeps no code of its own in the forwarding path.
 static void HookInterface_ISteamClient(void *pInterface, const char *pszVersion);
 static void LoadSteamConfigFromDll(HMODULE hSteamApi);
 
@@ -47,18 +50,8 @@ static bool GetConfiguredSteamDir(std::filesystem::path &steamDir) {
 	return false;
 }
 
-typedef HMODULE(WINAPI *fnLoadLibraryExW)(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags);
-static fnLoadLibraryExW oLoadLibraryExW = nullptr;
-
 static volatile LONG s_steam_hook_state = 0; // 0 = not started, 1 = in progress, 2 = ready
 
-// Obtain the real client's own interfaces and hook them.
-//
-// Resolved straight out of the real module, never through the emulator, so this
-// adds nothing to the forwarding path: the emulator's export table still points
-// only at real steamclient64.
-//
-// Returns the number of client interfaces hooked.
 static int HookRealClientInterfaces(HMODULE hReal) {
 	if (!hReal)
 		return 0;
@@ -121,11 +114,6 @@ static bool PrepareRealClientAlias(const std::filesystem::path &steamDir,
 	return true;
 }
 
-// Runs from inside the game's own LoadLibraryExW for steamclient64, before the
-// game can call into it, so the interfaces are hooked before first use.
-//
-// At most one attempt runs at a time, gated by s_steam_hook_state. A failed
-// attempt resets the state so a later load can retry.
 static void SetupSteamClientForwarding(HMODULE hEmulator) {
 	if (!hEmulator)
 		return;
@@ -142,8 +130,6 @@ static void SetupSteamClientForwarding(HMODULE hEmulator) {
 
 	LoadSteamConfigFromDll(hEmulator);
 
-	// Publishes the outcome and releases the state lock. Every failure below
-	// funnels through here rather than through scattered early returns.
 	auto finish = [](bool ok) {
 		InterlockedExchange(&s_steam_hook_state, ok ? 2 : 0);
 		if (!ok) {
@@ -152,12 +138,8 @@ static void SetupSteamClientForwarding(HMODULE hEmulator) {
 		}
 	};
 
-	const fnLoadLibraryExW loadLibraryExW = oLoadLibraryExW
-												? oLoadLibraryExW
-												: (fnLoadLibraryExW)&LoadLibraryExW;
-
-	// Locates the real client, loads it under an alias name, forwards the
-	// emulator's exports onto it, then hooks the real client's interfaces.
+	auto loadLibraryExW = oLoadLibraryExW ? oLoadLibraryExW : &LoadLibraryExW;
+	
 	auto setup = [&]() -> bool {
 		std::filesystem::path steamDir;
 		if (!GetConfiguredSteamDir(steamDir))
@@ -184,8 +166,6 @@ static void SetupSteamClientForwarding(HMODULE hEmulator) {
 		}
 		LOG("Steam loaded at %p from %ls\n", hReal, aliasPath.c_str());
 
-		// Drop the alias once nothing holds it, so the Steam directory is left
-		// the way we found it.
 		if (aliasCreated && !MoveFileExW(aliasPath.c_str(), nullptr,
 										 MOVEFILE_DELAY_UNTIL_REBOOT))
 			LOG("Could not schedule Steam DLL alias cleanup: %lu\n",
@@ -243,9 +223,6 @@ static HMODULE WINAPI hkLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWOR
 	}
 	return hModule;
 }
-
-typedef FARPROC(WINAPI *fnGetProcAddress)(HMODULE hModule, LPCSTR lpProcName);
-static fnGetProcAddress oGetProcAddress = nullptr;
 
 static FARPROC WINAPI hkGetProcAddress(HMODULE hModule, LPCSTR lpProcName) {
 	FARPROC proc = oGetProcAddress(hModule, lpProcName);

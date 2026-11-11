@@ -1485,14 +1485,10 @@ static void HookSteamApiInPlace(HMODULE hSteamApi, bool rebindImports) {
 }
 
 // LoadLibrary hooks
-typedef HMODULE(WINAPI *pfn_LoadLibraryA)(LPCSTR);
-typedef HMODULE(WINAPI *pfn_LoadLibraryW)(LPCWSTR);
-typedef HMODULE(WINAPI *pfn_LoadLibraryExA)(LPCSTR, HANDLE, DWORD);
-typedef HMODULE(WINAPI *pfn_LoadLibraryExW)(LPCWSTR, HANDLE, DWORD);
-static pfn_LoadLibraryA Orig_LoadLibraryA = nullptr;
-static pfn_LoadLibraryW Orig_LoadLibraryW = nullptr;
-static pfn_LoadLibraryExA Orig_LoadLibraryExA = nullptr;
-static pfn_LoadLibraryExW Orig_LoadLibraryExW = nullptr;
+decltype(&LoadLibraryA) Orig_LoadLibraryA = nullptr;
+decltype(&LoadLibraryW) Orig_LoadLibraryW = nullptr;
+decltype(&LoadLibraryExA) Orig_LoadLibraryExA = nullptr;
+decltype(&LoadLibraryExW) Orig_LoadLibraryExW = nullptr;
 
 static bool IsSteamApiDll(LPCWSTR lpFileName) {
 	if (!lpFileName)

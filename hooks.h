@@ -600,12 +600,12 @@ static int HookAllExports(HMODULE hSource, HMODULE hTarget) {
 // IAT rebinding: repoint already-bound imports of `dllName` at the emulator.
 // ---------------------------------------------------------------------------
 static int RebindImports(LPCSTR dllName, HMODULE hEmulator) {
-	PEB_CUSTOM *pPEB = (PEB_CUSTOM *)__readgsqword(0x60);
+	PEB *pPEB = (PEB *)__readgsqword(0x60);
 	_LIST_ENTRY *head = &pPEB->Ldr->InLoadOrderModuleList;
 	int rebound = 0;
 
 	for (_LIST_ENTRY *p = head->Flink; p != head; p = p->Flink) {
-		auto *entry = (_LDR_DATA_TABLE_ENTRY_CUSTOM *)p; // InLoadOrderLinks is the first field
+		auto *entry = (LDR_DATA_TABLE_ENTRY *)p; // InLoadOrderLinks is the first field
 		BYTE *base = (BYTE *)entry->DllBase;
 		if (!base || base == (BYTE *)hEmulator)
 			continue;

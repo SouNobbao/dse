@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <windows.h>
 #include <winnt.h>
-#include <winternl.h>
 
 static void UnlinkModule(PLIST_ENTRY entry) {
 	PLIST_ENTRY blink = entry->Blink;
@@ -21,16 +20,16 @@ static void UnlinkModule(PLIST_ENTRY entry) {
 }
 
 void HideLdrEntry(HMODULE hModule) {
-	PEB_CUSTOM *pPEB = (PEB_CUSTOM *)__readgsqword(0x60);
+	PEB *pPEB = (PEB *)__readgsqword(0x60);
 	if (!pPEB || !pPEB->Ldr)
 		return;
 
-	PPEB_LDR_DATA_CUSTOM ldr = pPEB->Ldr;
+	PPEB_LDR_DATA ldr = pPEB->Ldr;
 
-	LDR_DATA_TABLE_ENTRY_CUSTOM *self = NULL;
+	LDR_DATA_TABLE_ENTRY *self = NULL;
 	for (PLIST_ENTRY node = ldr->InLoadOrderModuleList.Flink; node != &ldr->InLoadOrderModuleList; node = node->Flink) {
-		LDR_DATA_TABLE_ENTRY_CUSTOM *entry =
-			CONTAINING_RECORD(node, LDR_DATA_TABLE_ENTRY_CUSTOM, InLoadOrderLinks);
+		LDR_DATA_TABLE_ENTRY *entry =
+			CONTAINING_RECORD(node, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
 		if (entry->DllBase == (PVOID)hModule) {
 			self = entry;
 			break;

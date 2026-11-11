@@ -7,6 +7,8 @@
 #include <windows.h>
 
 static void HookSteamAPI(HMODULE hSteamApi);
+typedef NTSTATUS(NTAPI *fnLdrLoadDll)(PWSTR, PULONG, PVOID, PVOID *);
+static fnLdrLoadDll oLdrLoadDll = nullptr;
 
 static volatile LONG s_api_forward_state = 0; // 0 = not started, 1 = in progress, 2 = ready
 
@@ -54,9 +56,6 @@ static bool IsSteamApi64Module(HMODULE hModule) {
 		   _wcsicmp(std::filesystem::path(path).filename().c_str(),
 					L"steam_api64.dll") == 0;
 }
-
-typedef NTSTATUS(NTAPI *fnLdrLoadDll)(PWSTR, PULONG, PVOID, PVOID *);
-static fnLdrLoadDll oLdrLoadDll = nullptr;
 
 static NTSTATUS NTAPI hkLdrLoadDll(PWSTR searchPath, PULONG characteristics, PVOID dllName,
 								   PVOID *dllHandle) {
