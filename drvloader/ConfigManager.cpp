@@ -236,6 +236,11 @@ bool SaveOriginalCallbackToRegistry(uint64_t callback) {
 
     RegSetValueExW(hKey, L"OriginalCallback", 0, REG_QWORD, (BYTE*)&callback, sizeof(uint64_t));
 
+    // keep track of the patch method used. 
+    RegDeleteValueW(hKey, L"OriginalCiOptions");
+    const wchar_t method[] = L"PDB";
+    RegSetValueExW(hKey, L"Method", 0, REG_SZ, (const BYTE*)method, (DWORD)sizeof(method));
+
     SYSTEMTIME st;
     GetLocalTime(&st);
     wchar_t timestampStr[64];
@@ -275,6 +280,25 @@ std::optional<uint64_t> LoadOriginalCallbackFromRegistry() {
     return callback;
 }
 
+std::wstring GetPatchMethodFromRegistry() {
+    HKEY hKey;
+
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\drvloader\\LatestState", 0,
+        KEY_READ, &hKey) != ERROR_SUCCESS) {
+        return L"";
+    }
+
+    wchar_t method[16] = {};
+    DWORD dataSize = sizeof(method);
+    std::wstring result;
+    if (RegQueryValueExW(hKey, L"Method", nullptr, nullptr, (BYTE*)&method, &dataSize) == ERROR_SUCCESS) {
+        result = method;
+    }
+
+    RegCloseKey(hKey);
+    return result;
+}
+
 bool ClearPatchStateFromRegistry() {
     HKEY hKey;
 
@@ -286,6 +310,7 @@ bool ClearPatchStateFromRegistry() {
     RegDeleteValueW(hKey, L"OriginalCallback");
     RegDeleteValueW(hKey, L"OriginalCiOptions");
     RegDeleteValueW(hKey, L"PatchTimestamp");
+    RegDeleteValueW(hKey, L"Method");
 
     DWORD isPatched = 0;
     RegSetValueExW(hKey, L"IsPatched", 0, REG_DWORD, (BYTE*)&isPatched, sizeof(DWORD));
@@ -302,6 +327,11 @@ bool SaveOriginalCiOptionsToRegistry(uint32_t value) {
         return false;
 
     RegSetValueExW(hKey, L"OriginalCiOptions", 0, REG_DWORD, (BYTE*)&value, sizeof(DWORD));
+    
+    // keep track of the patch method used. 
+    RegDeleteValueW(hKey, L"OriginalCallback");
+    const wchar_t method[] = L"CiOptions";
+    RegSetValueExW(hKey, L"Method", 0, REG_SZ, (const BYTE*)method, (DWORD)sizeof(method));
 
     DWORD isPatched = 1;
     RegSetValueExW(hKey, L"IsPatched", 0, REG_DWORD, (BYTE*)&isPatched, sizeof(DWORD));

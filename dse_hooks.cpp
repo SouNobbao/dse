@@ -96,10 +96,10 @@ HWND WINAPI HookedCreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName,
 	if (!s_dseRestored && g_config.toggleDse && !g_wasOffFromStart && !g_isLauncher && hwnd != nullptr) {
 		s_dseRestored = true;
 		if (g_wasToggled) {
-			LOG("Window created > we disabled DSE earlier, restoring now...\n");
+			LOG("Window created > Disabled DSE earlier, restoring now...\n");
 			EnableDse();
 		} else {
-			LOG("Window created > DSE wasn't disabled by us, skipping\n");
+			LOG("Window created > DSE was not disabled, skipping\n");
 		}
 	}
 	return hwnd;

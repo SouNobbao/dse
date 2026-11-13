@@ -1,6 +1,7 @@
 #include "patcher.h"
 
 #include "config.h"
+#include "common.h"
 #include "afterburner.h"
 #include "log.h"
 
@@ -35,6 +36,82 @@ static bool EnsureLoaderInitialized() {
 	}
 	g_loaderInitialized = true;
 	return true;
+}
+
+// Restore dse under rundll32.exe
+static bool RestoreDseExternal() {
+	if (IsHostPassthrough())
+		return false;
+
+	WCHAR dllPath[MAX_PATH]{};
+	if (!GetModuleFileNameW(g_hModule, dllPath, MAX_PATH))
+		return false;
+
+	WCHAR cmdLine[MAX_PATH * 4]{};
+	wsprintfW(cmdLine, L"rundll32.exe \"%s\",DseRestoreEntryW", dllPath);
+
+	LOG("Spawning external DSE restore: %ls\n", cmdLine);
+
+	SIZE_T attrSize = 0;
+	InitializeProcThreadAttributeList(nullptr, 1, 0, &attrSize);
+
+	auto* attrs = static_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(
+		HeapAlloc(GetProcessHeap(), 0, attrSize));
+
+	bool attrsReady = attrs &&
+					  InitializeProcThreadAttributeList(attrs, 1, 0, &attrSize);
+
+	STARTUPINFOEXW si{ sizeof(si) };
+	si.lpAttributeList = attrs;
+
+	PROCESS_INFORMATION pi{};
+
+	const bool ok = attrsReady &&
+					CreateProcessW(nullptr, cmdLine, nullptr, nullptr, FALSE,
+								   CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT,
+								   nullptr, nullptr, &si.StartupInfo, &pi);
+
+	bool restored = false;
+	if (ok) {
+		WaitForSingleObject(pi.hProcess, INFINITE);
+		DWORD exitCode = 0;
+		GetExitCodeProcess(pi.hProcess, &exitCode);
+		CloseHandle(pi.hThread);
+		CloseHandle(pi.hProcess);
+		LOG("rundll32 restore exited with code %lu\n", exitCode);
+
+		restored = !ConfigManager::LoadOriginalCallbackFromRegistry().has_value();
+		if (restored)
+			LOG("External restore succeeded\n");
+		else
+			LOG("External restore did not clear patch state\n");
+	} else {
+		LOG("Failed to spawn external restore, err: %lu\n", GetLastError());
+	}
+
+	if (attrsReady)
+		DeleteProcThreadAttributeList(attrs);
+	if (attrs)
+		HeapFree(GetProcessHeap(), 0, attrs);
+
+	return restored;
+}
+
+extern "C" __declspec(dllexport) void CALLBACK DseRestoreEntryW(HWND hwnd, HINSTANCE hinst, LPWSTR lpszCmdLine, int nCmdShow) {
+	(void)hwnd; (void)hinst; (void)lpszCmdLine; (void)nCmdShow;
+
+	InitLogPath(g_hModule);
+	LoadDseConfig(g_hModule);
+	g_loggingEnabled = g_config.logging;
+
+	DrvLoader loader;
+	loader.embeddedResourceData = rtcore_resource_data;
+	loader.embeddedResourceSize = rtcore_resource_data_len;
+
+	bool restored = loader.Initialize() && loader.RestoreDSE();
+	LOG("rundll32 DSE restore %s\n", restored ? "succeeded" : "failed");
+
+	ExitProcess(restored ? 0 : 1);
 }
 
 bool IsRunningAsAdmin() {
@@ -117,18 +194,33 @@ void EnableDse() {
 		return;
 	}
 
-	// Check which method was used via registry
+	auto method = ConfigManager::GetPatchMethodFromRegistry();
 	auto savedCallback = ConfigManager::LoadOriginalCallbackFromRegistry();
-	if (savedCallback) {
-		// Safe method was used — try drvloader restore
+	const bool pdbMethod = (method == L"PDB") || (method.empty() && savedCallback.has_value());
+
+	if (pdbMethod) {
+		if (!savedCallback) {
+			LOG("PDB patch state has no saved callback - nothing to restore\n");
+			if (WasAfterburnerRunning()) StartAfterburner();
+			return;
+		}
+
 		if (EnsureLoaderInitialized() && g_loader.RestoreDSE()) {
 			if (WasAfterburnerRunning()) StartAfterburner();
 			return;
 		}
-		LOG("Safe restore failed, trying standard restore\n");
+		LOG("Safe restore failed in-process, retrying from rundll32 process\n");
+
+		if (RestoreDseExternal()) {
+			if (WasAfterburnerRunning()) StartAfterburner();
+			return;
+		}
+		LOG("External restore also failed, keeping saved callback state.\n");
+		if (WasAfterburnerRunning()) StartAfterburner();
+		return;
 	}
 
-	// Standard method restore (or safe restore failed)
+	// Standard method restore (g_CiOptions)
 	EnsureResourceSet();
 	if (!g_loader.RestoreDSEStandard()) {
 		LOG("Standard restore failed\n");

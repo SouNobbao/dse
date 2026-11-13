@@ -17,7 +17,6 @@ private:
     std::wstring symbolCachePath;
     std::wstring symbolServer;
     bool useProgramDataStore;
-
     bool EnsureSymbolCache();
     bool DownloadPdb(const std::wstring& modulePath);
     bool DownloadFile(const std::wstring& url, const std::wstring& outputPath);
@@ -31,4 +30,5 @@ public:
     bool DownloadSymbolsForModule(const std::wstring& modulePath);
     std::pair<std::wstring, std::wstring> GetPdbInfoFromPe(const std::wstring& pePath);
     std::wstring GetSymbolCachePath() const { return symbolCachePath; }
+
 };

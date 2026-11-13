@@ -351,9 +351,46 @@ bool SymbolDownloader::DownloadSymbolsForModule(
   return true;
 }
 
+namespace {
+  struct ScopedSymbolResult {
+    const wchar_t *name;
+    DWORD64 address;
+    DWORD64 modBase;
+    bool found;
+  };
+
+  BOOL CALLBACK ScopedSymbolEnum(PSYMBOL_INFOW symbolInfo, ULONG, PVOID context) {
+    ScopedSymbolResult *result = (ScopedSymbolResult *)context;
+    if (result->found)
+      return TRUE;
+    if (_wcsicmp(symbolInfo->Name, result->name) == 0) {
+      result->address = symbolInfo->Address;
+      result->modBase = symbolInfo->ModBase;
+      result->found = true;
+    }
+    return TRUE;
+  }
+
+  class ModuleGuard {
+    public:
+      ModuleGuard(HANDLE process, DWORD64 base) : m_process(process), m_base(base) {}
+      ~ModuleGuard() {
+        if (m_base)
+          SymUnloadModule64(m_process, m_base);
+      }
+      ModuleGuard(const ModuleGuard &) = delete;
+      ModuleGuard &operator=(const ModuleGuard &) = delete;
+
+    private:
+      HANDLE m_process;
+      DWORD64 m_base;
+  };
+}
+
 std::optional<uint64_t>
 SymbolDownloader::GetSymbolOffset(const std::wstring &moduleName,
                                   const std::wstring &symbolName) {
+  HANDLE process = GetCurrentProcess();
   DRVLOG(L"Looking up symbol: %ls\n", symbolName.c_str());
 
   std::wstring moduleBaseName = moduleName;
@@ -363,34 +400,50 @@ SymbolDownloader::GetSymbolOffset(const std::wstring &moduleName,
   }
 
   DWORD64 baseAddr =
-      SymLoadModuleExW(GetCurrentProcess(), nullptr, moduleName.c_str(),
+      SymLoadModuleExW(process, nullptr, moduleName.c_str(),
                        nullptr, 0x10000000, 0, nullptr, 0);
   if (!baseAddr) {
     DRVLOG(L"Failed to load module symbols (error: %lu)\n", GetLastError());
     return std::nullopt;
   }
+  ModuleGuard unloadOnExit(process, baseAddr);
+
+  ScopedSymbolResult scoped{symbolName.c_str(), 0, 0, false};
+  if (SymEnumSymbolsW(process, baseAddr, symbolName.c_str(),
+                      ScopedSymbolEnum, &scoped) &&
+      scoped.found && scoped.modBase == baseAddr) {
+    uint64_t offset = scoped.address - baseAddr;
+    DRVLOG(L"Symbol found: %ls at offset 0x%llX\n", symbolName.c_str(), offset);
+    return offset;
+  }
 
   BYTE buffer[sizeof(SYMBOL_INFOW) + MAX_SYM_NAME * sizeof(wchar_t)];
   PSYMBOL_INFOW pSymbol = (PSYMBOL_INFOW)buffer;
-  pSymbol->SizeOfStruct = sizeof(SYMBOL_INFOW);
-  pSymbol->MaxNameLen = MAX_SYM_NAME;
 
   std::wstring qualified = moduleBaseName + L"!" + symbolName;
-  bool found = SymFromNameW(GetCurrentProcess(), qualified.c_str(), pSymbol);
+  const wchar_t *candidates[2] = {qualified.c_str(), symbolName.c_str()};
 
-  if (!found) {
-    found = SymFromNameW(GetCurrentProcess(), symbolName.c_str(), pSymbol);
+  for (const wchar_t *candidate : candidates) {
+    ZeroMemory(pSymbol, sizeof(SYMBOL_INFOW));
+
+    pSymbol->SizeOfStruct = sizeof(SYMBOL_INFOW);
+    pSymbol->MaxNameLen = MAX_SYM_NAME;
+
+    if (!SymFromNameW(GetCurrentProcess(), candidate, pSymbol))
+      continue;
+
+    if (pSymbol->ModBase != baseAddr) {
+      DRVLOG(L"Rejected %ls: resolved in foreign module (modbase 0x%llX != "
+             L"0x%llX)\n",
+             candidate, pSymbol->ModBase, baseAddr);
+      continue;
+    }
+
+    uint64_t offset = pSymbol->Address - baseAddr;
+    DRVLOG(L"Symbol found: %ls at offset 0x%llX\n", symbolName.c_str(), offset);
+    return offset;
   }
 
-  if (!found) {
-    DRVLOG(L"Symbol not found: %ls (error: %lu)\n", symbolName.c_str(), GetLastError());
-    SymUnloadModule64(GetCurrentProcess(), baseAddr);
-    return std::nullopt;
-  }
-
-  uint64_t offset = pSymbol->Address - baseAddr;
-  DRVLOG(L"Symbol found: %ls at offset 0x%llX\n", symbolName.c_str(), offset);
-
-  SymUnloadModule64(GetCurrentProcess(), baseAddr);
-  return offset;
+  DRVLOG(L"Symbol not found in module: %ls\n", symbolName.c_str());
+  return std::nullopt;
 }

@@ -13,6 +13,7 @@ namespace ConfigManager {
     bool SaveOffsetsToRegistry(uint64_t seCiCallbacks, uint64_t safeFunction, const std::wstring& buildInfo);
     bool SaveOriginalCallbackToRegistry(uint64_t callback);
     std::optional<uint64_t> LoadOriginalCallbackFromRegistry();
+    std::wstring GetPatchMethodFromRegistry();
     bool ClearPatchStateFromRegistry();
     bool IsPatchedFromRegistry();
     bool SaveOriginalCiOptionsToRegistry(uint32_t value);
