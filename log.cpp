@@ -21,7 +21,18 @@ void InitLogPath(HMODULE hModule) {
 	if (!GetModuleFileNameW(hModule, path, MAX_PATH))
 		return;
 	PathRemoveFileSpecW(path);
-	PathAppendW(path, L"dse-dll.log");
+
+	if (!PathAppendW(path, L"dse-logs"))
+		return;
+	CreateDirectoryW(path, nullptr);
+
+	SYSTEMTIME t;
+	GetLocalTime(&t);
+	WCHAR fileName[64];
+	swprintf_s(fileName, L"dse-%02d-%02d-%04d.log", t.wDay, t.wMonth, t.wYear);
+
+	if (!PathAppendW(path, fileName))
+		return;
 	lstrcpynW(g_logPath, path, MAX_PATH);
 }
 
