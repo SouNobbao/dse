@@ -48,7 +48,7 @@ static bool RestoreDseExternal() {
 		return false;
 
 	WCHAR cmdLine[MAX_PATH * 4]{};
-	wsprintfW(cmdLine, L"rundll32.exe \"%s\",DseRestoreEntryW", dllPath);
+	wsprintfW(cmdLine, L"rundll32.exe \"%s\",DseRestoreEntry", dllPath);
 
 	LOG("Spawning external DSE restore: %ls\n", cmdLine);
 
@@ -97,7 +97,7 @@ static bool RestoreDseExternal() {
 	return restored;
 }
 
-extern "C" __declspec(dllexport) void CALLBACK DseRestoreEntryW(HWND hwnd, HINSTANCE hinst, LPWSTR lpszCmdLine, int nCmdShow) {
+extern "C" __declspec(dllexport) void CALLBACK DseRestoreEntry(HWND hwnd, HINSTANCE hinst, LPSTR lpszCmdLine, int nCmdShow) {
 	(void)hwnd; (void)hinst; (void)lpszCmdLine; (void)nCmdShow;
 
 	InitLogPath(g_hModule);

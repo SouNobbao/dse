@@ -35,6 +35,7 @@ set(DRVLOADER_SOURCES
     drvloader/CiOptionsFinder.cpp
     drvloader/ConfigManager.cpp
     drvloader/SymbolDownloader.cpp
+    drvloader/PdbDownloadExport.cpp
     drvloader/ResourceInstaller.cpp
 )
 

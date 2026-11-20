@@ -89,6 +89,39 @@ static int HookRealClientInterfaces(HMODULE hReal) {
 	return hooked;
 }
 
+static bool OpenFileInfo(const std::filesystem::path &path,
+						 BY_HANDLE_FILE_INFORMATION &info) {
+	HANDLE hFile =
+		CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES,
+					FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+					OPEN_EXISTING, 0, nullptr);
+	if (hFile == INVALID_HANDLE_VALUE)
+		return false;
+
+	BOOL ok = GetFileInformationByHandle(hFile, &info);
+	CloseHandle(hFile);
+	return ok != FALSE;
+}
+
+static bool AliasMatchesRealDll(const std::filesystem::path &aliasPath,
+								const std::filesystem::path &realPath) {
+	BY_HANDLE_FILE_INFORMATION aliasInfo{}, realInfo{};
+	if (!OpenFileInfo(aliasPath, aliasInfo) || !OpenFileInfo(realPath, realInfo))
+		return false;
+
+	if (aliasInfo.dwVolumeSerialNumber == realInfo.dwVolumeSerialNumber &&
+		aliasInfo.nFileIndexHigh == realInfo.nFileIndexHigh &&
+		aliasInfo.nFileIndexLow == realInfo.nFileIndexLow)
+		return true;
+
+	return aliasInfo.nFileSizeHigh == realInfo.nFileSizeHigh &&
+		   aliasInfo.nFileSizeLow == realInfo.nFileSizeLow &&
+		   aliasInfo.ftLastWriteTime.dwHighDateTime ==
+			   realInfo.ftLastWriteTime.dwHighDateTime &&
+		   aliasInfo.ftLastWriteTime.dwLowDateTime ==
+			   realInfo.ftLastWriteTime.dwLowDateTime;
+}
+
 static bool PrepareRealClientAlias(const std::filesystem::path &steamDir,
 								   const std::filesystem::path &realPath,
 								   std::filesystem::path &aliasPath,
@@ -98,8 +131,18 @@ static bool PrepareRealClientAlias(const std::filesystem::path &steamDir,
 
 	std::error_code ec;
 	if (std::filesystem::exists(aliasPath, ec)) {
-		LOG("Reusing existing real Steam DLL alias: %ls\n", aliasPath.c_str());
-		return true;
+		if (AliasMatchesRealDll(aliasPath, realPath)) {
+			LOG("Reusing existing real Steam DLL alias: %ls\n", aliasPath.c_str());
+			return true;
+		}
+
+		LOG("Steam DLL alias is out of date, replacing: %ls\n",
+			aliasPath.c_str());
+		if (!DeleteFileW(aliasPath.c_str()) &&
+			GetLastError() != ERROR_FILE_NOT_FOUND) {
+			LOG("Failed to delete stale Steam DLL alias: %lu\n", GetLastError());
+			return false;
+		}
 	}
 
 	if (!CreateHardLinkW(aliasPath.c_str(), realPath.c_str(), nullptr)) {

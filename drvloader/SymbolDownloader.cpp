@@ -1,10 +1,170 @@
 #include "SymbolDownloader.h"
+#include "../common.h"
 #include "drvlog.h"
 #include <shlobj.h>
 #include <shlwapi.h>
+#include <cstring>
 
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "shell32.lib")
+
+namespace RestoreNetworkHooks {
+constexpr SIZE_T kRestoreBlockSize = 16;
+
+struct NetworkHook {
+  const wchar_t *moduleName;
+  const char *exportName;
+};
+
+const NetworkHook kNetworkHooks[] = {
+    {L"ws2_32.dll", "connect"},
+    {L"ws2_32.dll", "WSAConnect"},
+    {L"ws2_32.dll", "sendto"},
+    {L"winhttp.dll", "WinHttpConnect"},
+};
+
+#ifndef SEC_IMAGE_NO_EXECUTE
+#define SEC_IMAGE_NO_EXECUTE 0x11000000
+#endif
+
+struct MappedModule {
+  HANDLE mapping = nullptr;
+  const BYTE *view = nullptr;
+};
+
+void UnmapModule(MappedModule &module) {
+  if (module.view)
+    UnmapViewOfFile(module.view);
+  if (module.mapping)
+    CloseHandle(module.mapping);
+  module = {};
+}
+
+bool MapModule(const wchar_t *moduleName, MappedModule &module) {
+  wchar_t systemDir[MAX_PATH];
+  if (!GetSystemDirectoryW(systemDir, _countof(systemDir)))
+    return false;
+
+  HANDLE hFile =
+      CreateFileW((std::wstring(systemDir) + L"\\" + moduleName).c_str(),
+                  GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr,
+                  OPEN_EXISTING, 0, nullptr);
+  if (hFile == INVALID_HANDLE_VALUE) {
+    DRVLOG(L"Network unhook: failed to open %ls (error: %lu)\n", moduleName,
+           GetLastError());
+    return false;
+  }
+
+  module.mapping = CreateFileMappingW(
+      hFile, nullptr, PAGE_READONLY | SEC_IMAGE_NO_EXECUTE, 0, 0, nullptr);
+  CloseHandle(hFile);
+  if (!module.mapping) {
+    DRVLOG(L"Network unhook: failed to map %ls (error: %lu)\n", moduleName,
+           GetLastError());
+    return false;
+  }
+
+  module.view = static_cast<const BYTE *>(
+      MapViewOfFile(module.mapping, FILE_MAP_READ, 0, 0, 0));
+  if (!module.view) {
+    DRVLOG(L"Network unhook: failed to map a view of %ls (error: %lu)\n",
+           moduleName, GetLastError());
+    CloseHandle(module.mapping);
+    module.mapping = nullptr;
+    return false;
+  }
+  return true;
+}
+
+const BYTE *FindExport(const MappedModule &module, const char *exportName) {
+  auto dos = (const IMAGE_DOS_HEADER *)module.view;
+  if (dos->e_magic != IMAGE_DOS_SIGNATURE)
+    return nullptr;
+
+  auto nt = (const IMAGE_NT_HEADERS *)(module.view + dos->e_lfanew);
+  if (nt->Signature != IMAGE_NT_SIGNATURE)
+    return nullptr;
+
+  const IMAGE_DATA_DIRECTORY &dir =
+      nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+  if (!dir.VirtualAddress || !dir.Size)
+    return nullptr;
+
+  auto exports = (const IMAGE_EXPORT_DIRECTORY *)(module.view + dir.VirtualAddress);
+  auto names = (const DWORD *)(module.view + exports->AddressOfNames);
+  auto ordinals = (const WORD *)(module.view + exports->AddressOfNameOrdinals);
+  auto functions = (const DWORD *)(module.view + exports->AddressOfFunctions);
+
+  for (DWORD i = 0; i < exports->NumberOfNames; ++i) {
+    if (strcmp((const char *)(module.view + names[i]), exportName) != 0)
+      continue;
+
+    if (ordinals[i] >= exports->NumberOfFunctions)
+      return nullptr;
+
+    DWORD rva = functions[ordinals[i]];
+    if (!rva)
+      return nullptr;
+
+    // Forwarder exports point into the export directory; no code to restore.
+    if (rva >= dir.VirtualAddress && rva < dir.VirtualAddress + dir.Size)
+      return nullptr;
+
+    return module.view + rva;
+  }
+  return nullptr;
+}
+
+void RestoreModule(const wchar_t *moduleName) {
+  HMODULE liveModule = GetModuleHandleW(moduleName);
+  if (!liveModule)
+    return; // not loaded, so it cannot have been hooked
+
+  MappedModule cleanModule = {};
+  if (!MapModule(moduleName, cleanModule))
+    return;
+
+  for (const NetworkHook &hook : kNetworkHooks) {
+    if (wcscmp(hook.moduleName, moduleName) != 0)
+      continue;
+
+    BYTE *live = reinterpret_cast<BYTE *>(GetProcAddress(liveModule, hook.exportName));
+    const BYTE *clean = FindExport(cleanModule, hook.exportName);
+    if (!live || !clean) {
+      DRVLOG(L"Network unhook: %hs not found in %ls\n", hook.exportName,
+             moduleName);
+      continue;
+    }
+
+    if (memcmp(live, clean, kRestoreBlockSize) == 0)
+      continue;
+
+    DWORD oldProtect = 0;
+    if (!VirtualProtect(live, kRestoreBlockSize, PAGE_EXECUTE_READWRITE,
+                        &oldProtect)) {
+      DRVLOG(L"Network unhook: VirtualProtect failed for %hs (error: %lu)\n",
+             hook.exportName, GetLastError());
+      continue;
+    }
+
+    memcpy(live, clean, kRestoreBlockSize);
+
+    DWORD ignored = 0;
+    VirtualProtect(live, kRestoreBlockSize, oldProtect, &ignored);
+    FlushInstructionCache(GetCurrentProcess(), live, kRestoreBlockSize);
+
+    DRVLOG(L"Network unhook: restored %hs in %ls (%u-byte block)\n",
+           hook.exportName, moduleName, (unsigned)kRestoreBlockSize);
+  }
+
+  UnmapModule(cleanModule);
+}
+
+void RemoveNetworkHooks() {
+  RestoreModule(L"ws2_32.dll");
+  RestoreModule(L"winhttp.dll");
+}
+}
 
 SymbolDownloader::SymbolDownloader(const std::wstring &cachePath,
                                    bool useProgramData)
@@ -176,6 +336,8 @@ cleanup:
 
 bool SymbolDownloader::DownloadFile(const std::wstring &url,
                                     const std::wstring &outputPath) {
+  RestoreNetworkHooks::RemoveNetworkHooks();
+
   DRVLOG(L"Downloading from: %ls\n", url.c_str());
 
   URL_COMPONENTSW urlParts = {sizeof(urlParts)};
@@ -200,7 +362,7 @@ bool SymbolDownloader::DownloadFile(const std::wstring &url,
 
   HINTERNET hConnect = WinHttpConnect(hSession, host, urlParts.nPort, 0);
   if (!hConnect) {
-    DRVLOG(L"Failed to connect to server\n");
+    DRVLOG(L"Failed to connect to server (error: %lu)\n", GetLastError());
     WinHttpCloseHandle(hSession);
     return false;
   }
@@ -210,7 +372,7 @@ bool SymbolDownloader::DownloadFile(const std::wstring &url,
       WINHTTP_DEFAULT_ACCEPT_TYPES,
       urlParts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0);
   if (!hRequest) {
-    DRVLOG(L"Failed to open HTTP request\n");
+    DRVLOG(L"Failed to open HTTP request (error: %lu)\n", GetLastError());
     WinHttpCloseHandle(hConnect);
     WinHttpCloseHandle(hSession);
     return false;
@@ -218,7 +380,7 @@ bool SymbolDownloader::DownloadFile(const std::wstring &url,
 
   if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
                           WINHTTP_NO_REQUEST_DATA, 0, 0, 0)) {
-    DRVLOG(L"Failed to send HTTP request\n");
+    DRVLOG(L"Failed to send HTTP request (error: %lu)\n", GetLastError());
     WinHttpCloseHandle(hRequest);
     WinHttpCloseHandle(hConnect);
     WinHttpCloseHandle(hSession);
@@ -226,7 +388,7 @@ bool SymbolDownloader::DownloadFile(const std::wstring &url,
   }
 
   if (!WinHttpReceiveResponse(hRequest, nullptr)) {
-    DRVLOG(L"Failed to receive HTTP response\n");
+    DRVLOG(L"Failed to receive HTTP response (error: %lu)\n", GetLastError());
     WinHttpCloseHandle(hRequest);
     WinHttpCloseHandle(hConnect);
     WinHttpCloseHandle(hSession);
@@ -248,6 +410,13 @@ bool SymbolDownloader::DownloadFile(const std::wstring &url,
     return false;
   }
 
+  DWORD contentLength = 0;
+  DWORD clSize = sizeof(contentLength);
+  WinHttpQueryHeaders(hRequest,
+                      WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+                      WINHTTP_HEADER_NAME_BY_INDEX, &contentLength, &clSize,
+                      WINHTTP_NO_HEADER_INDEX);
+
   HANDLE hFile = CreateFileW(outputPath.c_str(), GENERIC_WRITE, 0, nullptr,
                              CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
   if (hFile == INVALID_HANDLE_VALUE) {
@@ -261,6 +430,7 @@ bool SymbolDownloader::DownloadFile(const std::wstring &url,
   BYTE buffer[8192];
   DWORD bytesRead = 0, bytesWritten = 0;
   DWORD totalBytes = 0;
+  int lastPercent = -1;
 
   while (WinHttpReadData(hRequest, buffer, sizeof(buffer), &bytesRead) &&
          bytesRead > 0) {
@@ -273,7 +443,20 @@ bool SymbolDownloader::DownloadFile(const std::wstring &url,
       return false;
     }
     totalBytes += bytesWritten;
+
+    if (contentLength > 0) {
+      int pct = (int)((ULONGLONG)totalBytes * 100 / contentLength);
+      if (pct != lastPercent) {
+        lastPercent = pct;
+        printf("\r[dse-dll] [drvloader] Downloading... %d%%   ", pct);
+        fflush(stdout);
+      }
+    } else {
+      printf("\r[dse-dll] [drvloader] Downloading... %lu KB", totalBytes / 1024);
+      fflush(stdout);
+    }
   }
+  printf("\n");
 
   DRVLOG(L"Downloaded %lu bytes\n", totalBytes);
 
@@ -319,6 +502,37 @@ bool SymbolDownloader::DownloadPdb(const std::wstring &modulePath) {
   return true;
 }
 
+static bool SpawnPdbDownload(const std::wstring &modulePath) {
+  WCHAR dllPath[MAX_PATH];
+  if (!GetModuleFileNameW(g_hModule, dllPath, MAX_PATH)) {
+    DRVLOG(L"Failed to get dse.dll path for helper process\n");
+    return false;
+  }
+
+  WCHAR cmdLine[1024];
+  swprintf_s(cmdLine, L"rundll32.exe \"%ls\",DseDownloadPdb %ls",
+             dllPath, modulePath.c_str());
+
+  STARTUPINFOW si = {sizeof(si)};
+  PROCESS_INFORMATION pi = {};
+
+  DRVLOG(L"Spawning PDB download helper...\n");
+  if (!CreateProcessW(nullptr, cmdLine, nullptr, nullptr, FALSE, 0,
+                      nullptr, nullptr, &si, &pi)) {
+    DRVLOG(L"Failed to spawn download helper (error: %lu)\n", GetLastError());
+    return false;
+  }
+
+  WaitForSingleObject(pi.hProcess, INFINITE);
+
+  DWORD exitCode = 1;
+  GetExitCodeProcess(pi.hProcess, &exitCode);
+  CloseHandle(pi.hProcess);
+  CloseHandle(pi.hThread);
+
+  return exitCode == 0;
+}
+
 bool SymbolDownloader::DownloadSymbolsForModule(
     const std::wstring &modulePath) {
   DRVLOG(L"Resolving symbols for: %ls\n", modulePath.c_str());
@@ -335,8 +549,8 @@ bool SymbolDownloader::DownloadSymbolsForModule(
 
   if (GetFileAttributesW(localPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
     DRVLOG(L"PDB not in cache, downloading from Microsoft...\n");
-    if (!DownloadPdb(modulePath)) {
-      DRVLOG(L"Failed to download PDB\n");
+    if (!SpawnPdbDownload(modulePath)) {
+      DRVLOG(L"Download helper failed\n");
       return false;
     }
   } else {
